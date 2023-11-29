@@ -1,4 +1,4 @@
-package gotask
+package gtask
 
 import (
 	"context"
@@ -16,42 +16,87 @@ type Message struct {
 	Content interface{}
 }
 
+type Content struct {
+	Name string
+	Args interface{}
+}
+
 // 定义 Service 接口
 type Service interface {
-	Run(wg *sync.WaitGroup)
+	Dispatch(wg *sync.WaitGroup)
 	Stop()
 	GetId() uint32
-	SetId(id uint32)
-	SendMessage(msg Message) error
+	Send(to uint32, content interface{}) error
+	Handler(name string, fn HandlerFunc)
+
+	sendMessage(msg Message) error
+	setId(id uint32)
+	getStatus() ServiceStatus
+	setStatus(status ServiceStatus)
 }
+
+type ServiceStatus int
+
+const (
+	SERVICE_STATUS_CREATE ServiceStatus = iota
+	SERVICE_STATUS_INIT
+	SERVICE_STATUS_RUNNING
+	SERVICE_STATUS_DIE
+)
+
+type HandlerFunc func(args interface{}) interface{}
 
 type BaseService struct {
-	id      uint32
-	chanMsg chan Message
-	ctx     context.Context
-	cancel  context.CancelFunc
+	id        uint32
+	chanMsg   chan Message
+	ctx       context.Context
+	cancel    context.CancelFunc
+	status    ServiceStatus
+	scheduler *Scheduler
+	handlers  map[string]HandlerFunc
 }
 
-func NewBaseService(msgSize uint32, ctx context.Context) *BaseService {
+func NewBaseService(ctx context.Context, scheduler *Scheduler, msgSize uint32) *BaseService {
 	ctx, cancel := context.WithCancel(ctx)
 	return &BaseService{
-		id:      uint32(0),
-		chanMsg: make(chan Message, msgSize),
-		ctx:     ctx,
-		cancel:  cancel,
+		id:        uint32(0),
+		chanMsg:   make(chan Message, msgSize),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    SERVICE_STATUS_CREATE,
+		scheduler: scheduler,
+		handlers:  make(map[string]HandlerFunc),
 	}
 }
 
+func (s *BaseService) Handler(name string, fn HandlerFunc) {
+	s.handlers[name] = fn
+}
+
 func (s *BaseService) Stop() {
+	s.setStatus(SERVICE_STATUS_DIE)
 	s.cancel()
 }
 
-func (s *BaseService) Run(wg *sync.WaitGroup) {
+func (s *BaseService) Dispatch(wg *sync.WaitGroup) {
+	wg.Add(1)
 	defer wg.Done()
+	s.setStatus(SERVICE_STATUS_RUNNING)
 	for {
 		select {
 		case msg := <-s.chanMsg:
 			fmt.Printf("Service %d received a message from %d: %+v\n", s.GetId(), msg.From, msg.Content)
+			content, ok := msg.Content.(Content)
+			if ok {
+				handFunc, exist := s.handlers[content.Name]
+				if exist {
+					ret := handFunc(content.Args)
+					fmt.Printf("Service %d handler:%s ret:%+v\n", s.GetId(), content.Name, ret)
+					// TODO: 把 ret 发送回去 还需要 session
+				}
+			} else {
+				fmt.Println("unknow content")
+			}
 		case <-s.ctx.Done():
 			fmt.Println("Service is closing")
 			return
@@ -63,17 +108,29 @@ func (s *BaseService) GetId() uint32 {
 	return s.id
 }
 
-func (s *BaseService) SetId(id uint32) {
+func (s *BaseService) setId(id uint32) {
 	s.id = id
 }
 
-func (s *BaseService) SendMessage(msg Message) error {
+func (s *BaseService) sendMessage(msg Message) error {
 	select {
 	case s.chanMsg <- msg:
 		return nil
 	default:
 		return fmt.Errorf("message queue is full")
 	}
+}
+
+func (s *BaseService) getStatus() ServiceStatus {
+	return s.status
+}
+
+func (s *BaseService) setStatus(status ServiceStatus) {
+	s.status = status
+}
+
+func (s *BaseService) Send(to uint32, content interface{}) error {
+	return s.scheduler.Send(s.id, to, content)
 }
 
 type Scheduler struct {
@@ -99,27 +156,43 @@ func (s *Scheduler) RegisterService(service Service) uint32 {
 		fmt.Errorf("Scheduler RegisterService failed. id:%d", id)
 		return 0
 	}
-	service.(Service).SetId(id) // 设置服务的 ID
+	service.setId(id) // 设置服务的 ID
 	s.services.Store(id, service)
+	service.setStatus(SERVICE_STATUS_INIT)
 	return id
 }
 
 func (s *Scheduler) Stop() {
 	s.services.Range(func(key, value interface{}) bool {
+		id := key.(uint32)
 		service := value.(Service)
 		service.Stop()
+		s.services.Delete(id)
 		return true
 	})
+
 	s.wg.Wait()
 	s.cancel() // 发出关闭调度器的信号
 }
 
-func (s *Scheduler) Run() {
+func (s *Scheduler) DispatchAll() {
 	s.services.Range(func(key, value interface{}) bool {
-		s.wg.Add(1)
-		go value.(Service).Run(&s.wg)
+		service := value.(Service)
+		s.Dispatch(service)
 		return true
 	})
+}
+
+func (s *Scheduler) Dispatch(service Service) error {
+	if service.getStatus() != SERVICE_STATUS_INIT {
+		return fmt.Errorf("Scheduler RegisterService failed. id:%d", service.GetId())
+	}
+	go service.Dispatch(&s.wg)
+	return nil
+}
+
+func (s *Scheduler) Loop() {
+	s.DispatchAll()
 
 	// 监听系统信号
 	signals := make(chan os.Signal, 1)
@@ -138,7 +211,7 @@ func (s *Scheduler) Run() {
 	s.Stop()
 }
 
-func (s *Scheduler) Send(from, to uint32, content interface{}) (err error) {
+func (s *Scheduler) Send(from, to uint32, content interface{}) error {
 	val, ok := s.services.Load(to)
 	if !ok {
 		return fmt.Errorf("service with id %d does not exist", to)
@@ -146,7 +219,7 @@ func (s *Scheduler) Send(from, to uint32, content interface{}) (err error) {
 
 	service := val.(Service)
 	msg := Message{From: from, To: to, Content: content}
-	if err := service.SendMessage(msg); err != nil {
+	if err := service.sendMessage(msg); err != nil {
 		return fmt.Errorf("failed to send message to service %d: %v", to, err)
 	}
 	return nil
@@ -157,18 +230,17 @@ type PluginService struct {
 	*BaseService
 }
 
-// NewPluginService 创建一个新的 PluginService 实例
-func NewPluginService(msgSize uint32, ctx context.Context) *PluginService {
-	baseService := NewBaseService(msgSize, ctx)
+func NewPluginService(ctx context.Context, scheduler *Scheduler, msgSize uint32) *PluginService {
+	baseService := NewBaseService(ctx, scheduler, msgSize)
 	return &PluginService{
 		BaseService: baseService,
 	}
 }
 
 // Run 重写了 BaseService 的 Run 方法，以提供特定的执行逻辑
-func (p *PluginService) Run(wg *sync.WaitGroup) {
+func (p *PluginService) Dispatch(wg *sync.WaitGroup) {
 	fmt.Printf("PluginService %d is running\n", p.GetId())
-	p.BaseService.Run(wg) // 调用基类的 Run 方法执行基本的消息处理逻辑
+	p.BaseService.Dispatch(wg) // 调用基类的 Run 方法执行基本的消息处理逻辑
 }
 
 // Stop 重写了 BaseService 的 Stop 方法，以提供特定的停止逻辑
