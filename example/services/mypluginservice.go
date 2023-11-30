@@ -2,25 +2,32 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"github.com/hanxi/gtask"
+	"github.com/hanxi/gtask/log"
 )
 
 type MyPluginService struct {
 	*gtask.BaseService
 }
 
-func New(ctx context.Context, scheduler *gtask.Scheduler, msgSize uint32) gtask.Service {
-	baseService := gtask.NewBaseService(ctx, scheduler, msgSize)
+func New(ctx context.Context, scheduler *gtask.Scheduler) gtask.Service {
+	baseService := gtask.NewBaseService(ctx, scheduler)
 	service := &MyPluginService{
 		BaseService: baseService.(*gtask.BaseService),
 	}
-	service.Handler("hello", func(args interface{}) interface{} {
-		fmt.Println("3in hello handler")
+	service.Register("hello", func(args interface{}) interface{} {
+		log.Info("3in hello handler")
 		return "hello world 3"
 	})
-	service.Handler("world", func(args interface{}) interface{} {
-		fmt.Println("3in world handler")
+	service.Register("world", func(args interface{}) interface{} {
+		log.Info("3in world handler")
+
+		ret, err := service.Call(2, &gtask.Content{Name: "hello", Args: "hellocallarg"})
+		if err != nil {
+			log.Error("call failed.", "err", err)
+		}
+		log.Info("debug4", "ret", ret)
+
 		return "hello world3"
 	})
 	return service

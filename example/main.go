@@ -2,38 +2,38 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"github.com/hanxi/gtask"
+	"github.com/hanxi/gtask/log"
 	"plugin"
 )
 
 func main() {
-	queueSize := uint32(100)
 	scheduler := gtask.NewScheduler()
 
-	s1 := gtask.NewBaseService(context.Background(), scheduler, queueSize)
-	s2 := gtask.NewPluginService(context.Background(), scheduler, queueSize)
-	s2.Handler("hello", func(args interface{}) interface{} {
-		fmt.Println("in hello handler")
-		return "hello world"
-	})
-	s1.Handler("world", func(args interface{}) interface{} {
-		fmt.Println("in world handler")
-		return "hello world"
-	})
+	s1 := gtask.NewBaseService(context.Background(), scheduler)
+	s2 := gtask.NewPluginService(context.Background(), scheduler)
 	id1, _ := scheduler.RegisterService(s1)
 	id2, _ := scheduler.RegisterService(s2)
-	fmt.Println("debug2")
 
-	err := scheduler.Send(id1, id2, gtask.Content{Name: "hello", Args: "helloarg"})
+	s1.Register("world", func(args interface{}) interface{} {
+		log.Info("in world handler")
+		return "hello world"
+	})
+	s2.Register("hello", func(args interface{}) interface{} {
+		log.Info("in hello handler")
+		return "hello world"
+	})
+	log.Info("debug2")
+
+	err := scheduler.Send(id1, id2, &gtask.Content{Name: "hello", Args: "helloarg"})
 	if err != nil {
-		fmt.Println(err)
+		log.Error("send filed.", "err", err)
 	}
-	err = s2.Send(id1, gtask.Content{Name: "world", Args: "worldarg"})
+	err = s2.Send(id1, &gtask.Content{Name: "world", Args: "worldarg"})
 	if err != nil {
-		fmt.Println(err)
+		log.Error("send filed.", "err", err)
 	}
-	fmt.Println("debug3")
+	log.Info("debug3")
 
 	p, err := plugin.Open("myplugin.so") // 打开插件文件
 	if err != nil {
@@ -45,26 +45,26 @@ func main() {
 		panic(err)
 	}
 
-	newServiceFunc, ok := newFunc.(func(ctx context.Context, scheduler *gtask.Scheduler, msgSize uint32) gtask.Service) // 类型断言为正确的函数签名
+	newServiceFunc, ok := newFunc.(func(ctx context.Context, scheduler *gtask.Scheduler) gtask.Service) // 类型断言为正确的函数签名
 	if !ok {
 		panic("Plugin has no 'New' function of the correct type")
 	}
 
-	s3 := newServiceFunc(context.Background(), scheduler, queueSize) // 调用函数获取Service实例
+	s3 := newServiceFunc(context.Background(), scheduler) // 调用函数获取Service实例
 	id3, _ := scheduler.RegisterService(s3)
-	fmt.Println("debug4")
+	log.Info("debug4")
 
-	err = s3.Send(id1, gtask.Content{Name: "world", Args: "worldarg"})
+	err = s3.Send(id1, &gtask.Content{Name: "world", Args: "worldarg"})
 	if err != nil {
-		fmt.Println(err)
+		log.Error("send filed.", "err", err)
 	}
-	fmt.Println("debug5")
+	log.Info("debug5")
 
-	err = s1.Send(id3, gtask.Content{Name: "world", Args: "worldarg"})
+	err = s1.Send(id3, &gtask.Content{Name: "world", Args: "worldarg"})
 	if err != nil {
-		fmt.Println(err)
+		log.Error("send filed.", "err", err)
 	}
-	fmt.Println("debug6")
+	log.Info("debug6")
 
 	scheduler.Loop()
 }

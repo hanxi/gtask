@@ -145,7 +145,7 @@ func (s *BaseService) Dispatch(wg *sync.WaitGroup) {
 		case msg := <-s.chanMsg:
 			s.exec(msg.Content)
 		case <-s.ctx.Done():
-			fmt.Println("Service is closing")
+			log.Info("Service is closing")
 			return
 		}
 	}
@@ -261,11 +261,11 @@ func (s *Scheduler) Loop() {
 	select {
 	case <-signals:
 		// 收到信号，取消 context
-		fmt.Println("Scheduler received an interrupt signal, stopping services...")
+		log.Info("Scheduler received an interrupt signal, stopping services...")
 		s.cancel()
 	case <-s.ctx.Done():
 		// Context 被取消，退出
-		fmt.Println("Scheduler is shutting down...")
+		log.Info("Scheduler is shutting down...")
 	}
 
 	s.Stop()
@@ -323,12 +323,12 @@ func NewPluginService(ctx context.Context, scheduler *Scheduler) Service {
 
 // Run 重写了 BaseService 的 Run 方法，以提供特定的执行逻辑
 func (p *PluginService) Dispatch(wg *sync.WaitGroup) {
-	fmt.Printf("PluginService %d is running\n", p.GetId())
+	log.Info("PluginService is running", "id", p.GetId())
 	p.BaseService.Dispatch(wg) // 调用基类的 Run 方法执行基本的消息处理逻辑
 }
 
 // Stop 重写了 BaseService 的 Stop 方法，以提供特定的停止逻辑
 func (p *PluginService) Stop() {
-	fmt.Printf("PluginService %d is stopping\n", p.GetId())
+	log.Info("PluginService is stopping", "id", p.GetId())
 	p.BaseService.Stop() // 调用基类的 Stop 方法来执行取消操作
 }
