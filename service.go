@@ -3,10 +3,11 @@ package gtask
 import (
 	"context"
 	"fmt"
-	"github.com/hanxi/gtask/chanrpc"
 	"github.com/hanxi/gtask/config"
+	"github.com/hanxi/gtask/log"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -15,23 +16,35 @@ import (
 type Message struct {
 	From    uint32
 	To      uint32
-	Content interface{}
+	Content *Content
 }
 
 type Content struct {
-	Name string
-	Args interface{}
+	Name    string
+	Args    interface{}
+	ChanRet chan *RetInfo
+	Session uint32
 }
+
+type RetInfo struct {
+	// nil
+	// interface{}
+	ret interface{}
+	err error
+}
+
+type HandlerFunc func(arg interface{}) interface{}
 
 // 定义 Service 接口
 type Service interface {
 	Dispatch(wg *sync.WaitGroup)
 	Stop()
 	GetId() uint32
-	Send(to uint32, content interface{}) error
-	Handler(name string, fn interface{})
+	Send(to uint32, content *Content) error                // 发送消息
+	Call(to uint32, content *Content) (interface{}, error) // 阻塞rpc
+	Register(name string, fn HandlerFunc)
 
-	SendMessage(msg Message) error
+	SendMessage(msg *Message) error
 	SetId(id uint32)
 	GetStatus() ServiceStatus
 	SetStatus(status ServiceStatus)
@@ -47,37 +60,81 @@ const (
 )
 
 type BaseService struct {
-	id         uint32
-	chanMsg    chan Message
-	ctx        context.Context
-	cancel     context.CancelFunc
-	status     ServiceStatus
-	scheduler  *Scheduler
-	chanClient *chanrpc.Client
-	chanServer *chanrpc.Server
+	id        uint32
+	chanMsg   chan Message
+	ctx       context.Context
+	cancel    context.CancelFunc
+	status    ServiceStatus
+	scheduler *Scheduler
+	handlers  map[string]HandlerFunc
 }
 
-func NewBaseService(ctx context.Context, scheduler *Scheduler, msgSize uint32) Service {
+func NewBaseService(ctx context.Context, scheduler *Scheduler) Service {
 	ctx, cancel := context.WithCancel(ctx)
 	return &BaseService{
-		id:         uint32(0),
-		chanMsg:    make(chan Message, msgSize),
-		ctx:        ctx,
-		cancel:     cancel,
-		status:     SERVICE_STATUS_CREATE,
-		scheduler:  scheduler,
-		chanClient: chanrpc.NewClient(config.C.AsynCallLen),
-		chanServer: chanrpc.NewServer(config.C.ChanRPCLen),
+		id:        uint32(0),
+		chanMsg:   make(chan Message, config.C.MsgQueueLen),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    SERVICE_STATUS_CREATE,
+		scheduler: scheduler,
+		handlers:  make(map[string]HandlerFunc),
 	}
 }
 
-func (s *BaseService) Handler(name string, fn interface{}) {
-	s.chanServer.Register(name, fn)
+func (s *BaseService) Register(name string, fn HandlerFunc) {
+	if _, ok := s.handlers[name]; ok {
+		panic(fmt.Sprintf("function %s: already registered", name))
+	}
+	s.handlers[name] = fn
 }
 
 func (s *BaseService) Stop() {
 	s.SetStatus(SERVICE_STATUS_DIE)
 	s.cancel()
+}
+
+func (s *BaseService) ret(content *Content, ri *RetInfo) (err error) {
+	if content.ChanRet == nil {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = r.(error)
+		}
+	}()
+
+	content.ChanRet <- ri
+	return
+}
+func (s *BaseService) exec(content *Content) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if config.C.StackBufLen > 0 {
+				buf := make([]byte, config.C.StackBufLen)
+				l := runtime.Stack(buf, false)
+				err = fmt.Errorf("%v: %s", r, buf[:l])
+			} else {
+				err = fmt.Errorf("%v", r)
+			}
+
+			s.ret(content, &RetInfo{err: fmt.Errorf("%v", r)})
+		}
+	}()
+
+	// execute
+	handFunc, exist := s.handlers[content.Name]
+	if !exist {
+		err = fmt.Errorf("unknow handler:%s", content.Name)
+		s.ret(content, &RetInfo{err: err})
+		return
+	}
+
+	ret := handFunc(content.Args)
+	log.Info("Service handler ok", "id", s.GetId(), "handler", content.Name, "ret", ret)
+	s.ret(content, &RetInfo{ret: ret})
+	return
 }
 
 func (s *BaseService) Dispatch(wg *sync.WaitGroup) {
@@ -86,18 +143,7 @@ func (s *BaseService) Dispatch(wg *sync.WaitGroup) {
 	for {
 		select {
 		case msg := <-s.chanMsg:
-			fmt.Printf("Service %d received a message from %d: %+v\n", s.GetId(), msg.From, msg.Content)
-			content, ok := msg.Content.(Content)
-			if ok {
-				handFunc, exist := s.handlers[content.Name]
-				if exist {
-					ret := handFunc(content.Args)
-					fmt.Printf("Service %d handler:%s ret:%+v\n", s.GetId(), content.Name, ret)
-					// TODO: 把 ret 发送回去 还需要 session
-				}
-			} else {
-				fmt.Println("unknow content")
-			}
+			s.exec(msg.Content)
 		case <-s.ctx.Done():
 			fmt.Println("Service is closing")
 			return
@@ -113,15 +159,22 @@ func (s *BaseService) SetId(id uint32) {
 	s.id = id
 }
 
-func (s *BaseService) SendMessage(msg Message) error {
+func (s *BaseService) SendMessage(msg *Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = r.(error)
+		}
+	}()
+
 	select {
-	case s.chanMsg <- msg:
+	case s.chanMsg <- *msg:
 		return nil
 	case <-s.ctx.Done():
-		return fmt.Errorf("failed to send message: service is stopping")
+		err = fmt.Errorf("failed to send message: service is stopping")
 	default:
-		return fmt.Errorf("message queue is full")
+		err = fmt.Errorf("message queue is full")
 	}
+	return
 }
 
 func (s *BaseService) GetStatus() ServiceStatus {
@@ -132,8 +185,12 @@ func (s *BaseService) SetStatus(status ServiceStatus) {
 	s.status = status
 }
 
-func (s *BaseService) Send(to uint32, content interface{}) error {
+func (s *BaseService) Send(to uint32, content *Content) error {
 	return s.scheduler.Send(s.id, to, content)
+}
+
+func (s *BaseService) Call(to uint32, content *Content) (interface{}, error) {
+	return s.scheduler.Call(s.id, to, content)
 }
 
 type Scheduler struct {
@@ -214,18 +271,42 @@ func (s *Scheduler) Loop() {
 	s.Stop()
 }
 
-func (s *Scheduler) Send(from, to uint32, content interface{}) error {
+func (s *Scheduler) Send(from, to uint32, content *Content) error {
 	val, ok := s.services.Load(to)
 	if !ok {
 		return fmt.Errorf("service with id %d does not exist", to)
 	}
 
 	service := val.(Service)
-	msg := Message{From: from, To: to, Content: content}
+	msg := &Message{
+		From:    from,
+		To:      to,
+		Content: content,
+	}
 	if err := service.SendMessage(msg); err != nil {
 		return fmt.Errorf("failed to send message to service %d: %v", to, err)
 	}
 	return nil
+}
+
+func (s *Scheduler) Call(from, to uint32, content *Content) (interface{}, error) {
+	val, ok := s.services.Load(to)
+	if !ok {
+		return nil, fmt.Errorf("service with id %d does not exist", to)
+	}
+
+	service := val.(Service)
+	content.ChanRet = make(chan *RetInfo, 1)
+	msg := &Message{
+		From:    from,
+		To:      to,
+		Content: content,
+	}
+	if err := service.SendMessage(msg); err != nil {
+		return nil, fmt.Errorf("failed to send message to service %d: %v", to, err)
+	}
+	ri := <-content.ChanRet
+	return ri.ret, ri.err
 }
 
 // PluginService 是一个实现了 Service 接口的插件服务
@@ -233,8 +314,8 @@ type PluginService struct {
 	*BaseService
 }
 
-func NewPluginService(ctx context.Context, scheduler *Scheduler, msgSize uint32) Service {
-	service := NewBaseService(ctx, scheduler, msgSize)
+func NewPluginService(ctx context.Context, scheduler *Scheduler) Service {
+	service := NewBaseService(ctx, scheduler)
 	return &PluginService{
 		BaseService: service.(*BaseService),
 	}

@@ -4,24 +4,24 @@ import (
 	"log/slog"
 )
 
-var logger slog.Logger
+var logger *slog.Logger
 
 func init() {
 	logger = slog.Default()
 }
 
-func Debug(args ...any) {
-	logger.Debug(args...)
+func Debug(msg string, args ...any) {
+	logger.Debug(msg, args...)
 }
 
-func Info(args ...any) {
-	logger.Info(args...)
+func Info(msg string, args ...any) {
+	logger.Info(msg, args...)
 }
 
-func Warn(args ...any) {
-	logger.Warn(args...)
+func Warn(msg string, args ...any) {
+	logger.Warn(msg, args...)
 }
 
-func Error(args ...any) {
-	logger.Error(args...)
+func Error(msg string, args ...any) {
+	logger.Error(msg, args...)
 }

@@ -9,15 +9,13 @@ import (
 
 type Config struct {
 	StackBufLen int `json:"stackBufLen"`
-	AsynCallLen int `json:"asynCallLen"`
-	ChanRPCLen  int `json:"chanRPCLen"`
+	MsgQueueLen int `json:"msgQueueLen"`
 }
 
 // 包级别的配置实例，拥有默认值
 var C = &Config{
 	StackBufLen: 4096,
-	AsynCallLen: 10000,
-	ChanRPCLen:  10000,
+	MsgQueueLen: 4096,
 }
 
 var once sync.Once
