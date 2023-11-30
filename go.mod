@@ -1,3 +1,3 @@
-module github.com/hanxi/gotask
+module github.com/hanxi/gtask
 
 go 1.18

@@ -21,8 +21,8 @@ func TestService(t *testing.T) {
 		fmt.Println("in world handler")
 		return "hello world"
 	})
-	id1 := scheduler.RegisterService(s1)
-	id2 := scheduler.RegisterService(s2)
+	id1, _ := scheduler.RegisterService(s1)
+	id2, _ := scheduler.RegisterService(s2)
 	fmt.Println("debug2")
 
 	err := scheduler.Send(id1, id2, Content{Name: "hello", Args: "helloarg"})
