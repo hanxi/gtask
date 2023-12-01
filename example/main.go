@@ -13,7 +13,15 @@ func main() {
 	s1 := gtask.NewBaseService(context.Background(), scheduler)
 	s2 := gtask.NewPluginService(context.Background(), scheduler)
 	id1, _ := scheduler.RegisterService(s1)
+	err := scheduler.Dispatch(s1)
+	if err != nil {
+		log.Error("Dispatch s1 failed.", "err", err)
+	}
 	id2, _ := scheduler.RegisterService(s2)
+	err = scheduler.Dispatch(s2)
+	if err != nil {
+		log.Error("Dispatch s2 failed.", "err", err)
+	}
 
 	s1.Register("world", func(arg interface{}) interface{} {
 		log.Info("in world handler")
@@ -25,7 +33,7 @@ func main() {
 	})
 	log.Info("debug2")
 
-	err := scheduler.Send(id1, id2, &gtask.Content{Name: "hello", Arg: "helloarg"})
+	err = scheduler.Send(id1, id2, &gtask.Content{Name: "hello", Arg: "helloarg"})
 	if err != nil {
 		log.Error("send filed.", "err", err)
 	}
@@ -52,6 +60,10 @@ func main() {
 
 	s3 := newServiceFunc(context.Background(), scheduler) // 调用函数获取Service实例
 	id3, _ := scheduler.RegisterService(s3)
+	err = scheduler.Dispatch(s3)
+	if err != nil {
+		log.Error("Dispatch failed.", "err", err)
+	}
 	log.Info("debug4")
 
 	err = s3.Send(id1, &gtask.Content{Name: "world", Arg: "worldarg"})

@@ -178,6 +178,7 @@ func (s *BaseService) exec(msg *Message) {
 
 func (s *BaseService) dispatch(wg *sync.WaitGroup) {
 	defer wg.Done()
+	log.Info("in dispatch", "service", s)
 	s.setStatus(SERVICE_STATUS_RUNNING)
 	for {
 		select {
@@ -286,15 +287,8 @@ func (s *Scheduler) Stop() {
 	s.cancel() // 发出关闭调度器的信号
 }
 
-func (s *Scheduler) DispatchAll() {
-	s.services.Range(func(key, value interface{}) bool {
-		service := value.(Service)
-		s.Dispatch(service)
-		return true
-	})
-}
-
 func (s *Scheduler) Dispatch(service Service) error {
+	log.Info("Dispatch", "service", service)
 	if service.getStatus() != SERVICE_STATUS_INIT {
 		return fmt.Errorf("Scheduler RegisterService failed. id:%d", service.GetId())
 	}
@@ -304,8 +298,6 @@ func (s *Scheduler) Dispatch(service Service) error {
 }
 
 func (s *Scheduler) Loop() {
-	s.DispatchAll()
-
 	// 监听系统信号
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
@@ -323,41 +315,41 @@ func (s *Scheduler) Loop() {
 	s.Stop()
 }
 
-func (s *Scheduler) rawSend(from, to uint64, content *Content, proto MessageType) error {
-	val, ok := s.services.Load(to)
+func (s *Scheduler) rawSend(msg *Message) error {
+	val, ok := s.services.Load(msg.To)
 	if !ok {
-		return fmt.Errorf("service with id %d does not exist", to)
+		return fmt.Errorf("service with id %d does not exist", msg.To)
 	}
-
 	service := val.(Service)
-	content.Session = s.NewSessionId()
-	content.proto = proto
-	msg := &Message{
-		From:    from,
-		To:      to,
-		Content: content,
-	}
 	if err := service.sendMessage(msg); err != nil {
-		return fmt.Errorf("failed to send message to service %d: %v", to, err)
+		return fmt.Errorf("failed to send message to service %d: %v", msg.To, err)
 	}
 	return nil
 }
 
 func (s *Scheduler) Send(from, to uint64, content *Content) error {
-	return s.rawSend(from, to, content, MESSAGE_REQUEST)
+	content.Session = s.NewSessionId()
+	content.proto = MESSAGE_REQUEST
+	msg := &Message{
+		From:    from,
+		To:      to,
+		Content: content,
+	}
+	return s.rawSend(msg)
 }
 
 func (s *Scheduler) response(from, to uint64, content *Content) error {
-	return s.rawSend(from, to, content, MESSAGE_RESPONSE)
+	content.Session = s.NewSessionId()
+	content.proto = MESSAGE_RESPONSE
+	msg := &Message{
+		From:    from,
+		To:      to,
+		Content: content,
+	}
+	return s.rawSend(msg)
 }
 
 func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error) {
-	val, ok := s.services.Load(to)
-	if !ok {
-		return nil, fmt.Errorf("service with id %d does not exist", to)
-	}
-
-	service := val.(Service)
 	content.chanRet = make(chan *RetInfo, 1)
 	content.Session = s.NewSessionId()
 	content.proto = MESSAGE_REQUEST
@@ -366,8 +358,9 @@ func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error)
 		To:      to,
 		Content: content,
 	}
-	if err := service.sendMessage(msg); err != nil {
-		return nil, fmt.Errorf("failed to send message to service %d: %v", to, err)
+	err := s.rawSend(msg)
+	if err != nil {
+		return nil, err
 	}
 
 	timeout := time.Duration(config.C.CallTimeout) * time.Second
@@ -380,12 +373,6 @@ func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error)
 }
 
 func (s *Scheduler) AsyncCall(from, to uint64, content *Content, cb CbFunc) error {
-	val, ok := s.services.Load(to)
-	if !ok {
-		return fmt.Errorf("service with id %d does not exist", to)
-	}
-
-	service := val.(Service)
 	content.Session = s.NewSessionId()
 	content.cb = cb
 	content.proto = MESSAGE_REQUEST
@@ -394,10 +381,7 @@ func (s *Scheduler) AsyncCall(from, to uint64, content *Content, cb CbFunc) erro
 		To:      to,
 		Content: content,
 	}
-	if err := service.sendMessage(msg); err != nil {
-		return fmt.Errorf("failed to send message to service %d: %v", to, err)
-	}
-	return nil
+	return s.rawSend(msg)
 }
 
 // PluginService 是一个实现了 Service 接口的插件服务

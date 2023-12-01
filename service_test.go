@@ -13,7 +13,15 @@ func TestService(t *testing.T) {
 	s1 := NewBaseService(context.Background(), scheduler)
 	s2 := NewPluginService(context.Background(), scheduler)
 	id1, _ := scheduler.RegisterService(s1)
+	err := scheduler.Dispatch(s1)
+	if err != nil {
+		log.Error("Dispatch s1 failed.", "err", err)
+	}
 	id2, _ := scheduler.RegisterService(s2)
+	err = scheduler.Dispatch(s2)
+	if err != nil {
+		log.Error("Dispatch s2 failed.", "err", err)
+	}
 
 	s1.Register("s1func", func(arg interface{}) interface{} {
 		log.Info("s1 in handler", "arg", arg)
@@ -33,7 +41,7 @@ func TestService(t *testing.T) {
 
 	log.Info("debug2")
 
-	err := scheduler.Send(id1, id2, &Content{Name: "s2func", Arg: "send s1 arg"})
+	err = scheduler.Send(id1, id2, &Content{Name: "s2func", Arg: "send s1 arg"})
 	if err != nil {
 		log.Error("s1 send s2 failed.", "err", err)
 	}
