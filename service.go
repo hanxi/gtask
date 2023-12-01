@@ -21,17 +21,16 @@ type Message struct {
 }
 
 type Content struct {
-	Name    string
-	Arg     interface{}
-	ChanRet chan *RetInfo
+	Name string
+	Arg  interface{}
+
+	chanRet chan *RetInfo
 	Session uint64
-	Cb      CbFunc
-	Proto   MessageType
+	cb      CbFunc
+	proto   MessageType
 }
 
 type RetInfo struct {
-	// nil
-	// interface{}
 	ret interface{}
 	err error
 }
@@ -41,7 +40,6 @@ type CbFunc func(ret interface{}, err error)
 
 // 定义 Service 接口
 type Service interface {
-	Dispatch(wg *sync.WaitGroup)
 	Stop()
 	GetId() uint64
 	Send(to uint64, content *Content) error                 // 发送消息
@@ -49,10 +47,11 @@ type Service interface {
 	AsyncCall(to uint64, content *Content, cb CbFunc) error // 异步rpc
 	Register(name string, fn HandlerFunc)
 
-	SendMessage(msg *Message) error
-	SetId(id uint64)
-	GetStatus() ServiceStatus
-	SetStatus(status ServiceStatus)
+	sendMessage(msg *Message) error
+	dispatch(wg *sync.WaitGroup)
+	setId(id uint64)
+	getStatus() ServiceStatus
+	setStatus(status ServiceStatus)
 }
 
 type ServiceStatus int
@@ -102,13 +101,13 @@ func (s *BaseService) Register(name string, fn HandlerFunc) {
 }
 
 func (s *BaseService) Stop() {
-	s.SetStatus(SERVICE_STATUS_DIE)
+	s.setStatus(SERVICE_STATUS_DIE)
 	s.cancel()
 }
 
 func (s *BaseService) ret(msg *Message, ri *RetInfo) (err error) {
 	content := msg.Content
-	if content.ChanRet == nil && content.Cb == nil {
+	if content.chanRet == nil && content.cb == nil {
 		return
 	}
 
@@ -118,13 +117,13 @@ func (s *BaseService) ret(msg *Message, ri *RetInfo) (err error) {
 		}
 	}()
 
-	if content.Cb == nil {
-		content.ChanRet <- ri
+	if content.cb == nil {
+		content.chanRet <- ri
 	} else {
 		newContent := &Content{
 			Arg:     ri,
 			Session: content.Session,
-			Cb:      content.Cb,
+			cb:      content.cb,
 		}
 		err = s.response(msg.From, newContent)
 	}
@@ -148,8 +147,8 @@ func (s *BaseService) exec(msg *Message) {
 
 	// 处理 AsyncCall
 	content := msg.Content
-	if content.Proto == MESSAGE_RESPONSE {
-		cbFunc := content.Cb
+	if content.proto == MESSAGE_RESPONSE {
+		cbFunc := content.cb
 		if cbFunc == nil {
 			log.Error("Service cb not exist", "id", s.GetId())
 			return
@@ -177,9 +176,9 @@ func (s *BaseService) exec(msg *Message) {
 	s.ret(msg, &RetInfo{ret: ret})
 }
 
-func (s *BaseService) Dispatch(wg *sync.WaitGroup) {
+func (s *BaseService) dispatch(wg *sync.WaitGroup) {
 	defer wg.Done()
-	s.SetStatus(SERVICE_STATUS_RUNNING)
+	s.setStatus(SERVICE_STATUS_RUNNING)
 	for {
 		select {
 		case msg := <-s.chanMsg:
@@ -195,11 +194,11 @@ func (s *BaseService) GetId() uint64 {
 	return s.id
 }
 
-func (s *BaseService) SetId(id uint64) {
+func (s *BaseService) setId(id uint64) {
 	s.id = id
 }
 
-func (s *BaseService) SendMessage(msg *Message) (err error) {
+func (s *BaseService) sendMessage(msg *Message) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = r.(error)
@@ -217,11 +216,11 @@ func (s *BaseService) SendMessage(msg *Message) (err error) {
 	return
 }
 
-func (s *BaseService) GetStatus() ServiceStatus {
+func (s *BaseService) getStatus() ServiceStatus {
 	return s.status
 }
 
-func (s *BaseService) SetStatus(status ServiceStatus) {
+func (s *BaseService) setStatus(status ServiceStatus) {
 	s.status = status
 }
 
@@ -268,9 +267,9 @@ func (s *Scheduler) RegisterService(service Service) (uint64, error) {
 	if exist {
 		return 0, fmt.Errorf("Service with ID %d already exists", id)
 	}
-	service.SetId(id) // 设置服务的 ID
+	service.setId(id) // 设置服务的 ID
 	s.services.Store(id, service)
-	service.SetStatus(SERVICE_STATUS_INIT)
+	service.setStatus(SERVICE_STATUS_INIT)
 	return id, nil
 }
 
@@ -296,11 +295,11 @@ func (s *Scheduler) DispatchAll() {
 }
 
 func (s *Scheduler) Dispatch(service Service) error {
-	if service.GetStatus() != SERVICE_STATUS_INIT {
+	if service.getStatus() != SERVICE_STATUS_INIT {
 		return fmt.Errorf("Scheduler RegisterService failed. id:%d", service.GetId())
 	}
 	s.wg.Add(1)
-	go service.Dispatch(&s.wg)
+	go service.dispatch(&s.wg)
 	return nil
 }
 
@@ -332,13 +331,13 @@ func (s *Scheduler) rawSend(from, to uint64, content *Content, proto MessageType
 
 	service := val.(Service)
 	content.Session = s.NewSessionId()
-	content.Proto = proto
+	content.proto = proto
 	msg := &Message{
 		From:    from,
 		To:      to,
 		Content: content,
 	}
-	if err := service.SendMessage(msg); err != nil {
+	if err := service.sendMessage(msg); err != nil {
 		return fmt.Errorf("failed to send message to service %d: %v", to, err)
 	}
 	return nil
@@ -359,21 +358,21 @@ func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error)
 	}
 
 	service := val.(Service)
-	content.ChanRet = make(chan *RetInfo, 1)
+	content.chanRet = make(chan *RetInfo, 1)
 	content.Session = s.NewSessionId()
-	content.Proto = MESSAGE_REQUEST
+	content.proto = MESSAGE_REQUEST
 	msg := &Message{
 		From:    from,
 		To:      to,
 		Content: content,
 	}
-	if err := service.SendMessage(msg); err != nil {
+	if err := service.sendMessage(msg); err != nil {
 		return nil, fmt.Errorf("failed to send message to service %d: %v", to, err)
 	}
 
 	timeout := time.Duration(config.C.CallTimeout) * time.Second
 	select {
-	case ri := <-content.ChanRet:
+	case ri := <-content.chanRet:
 		return ri.ret, ri.err
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("call to service %d timed out", to)
@@ -388,14 +387,14 @@ func (s *Scheduler) AsyncCall(from, to uint64, content *Content, cb CbFunc) erro
 
 	service := val.(Service)
 	content.Session = s.NewSessionId()
-	content.Cb = cb
-	content.Proto = MESSAGE_REQUEST
+	content.cb = cb
+	content.proto = MESSAGE_REQUEST
 	msg := &Message{
 		From:    from,
 		To:      to,
 		Content: content,
 	}
-	if err := service.SendMessage(msg); err != nil {
+	if err := service.sendMessage(msg); err != nil {
 		return fmt.Errorf("failed to send message to service %d: %v", to, err)
 	}
 	return nil
@@ -411,12 +410,6 @@ func NewPluginService(ctx context.Context, scheduler *Scheduler) Service {
 	return &PluginService{
 		BaseService: service.(*BaseService),
 	}
-}
-
-// Run 重写了 BaseService 的 Run 方法，以提供特定的执行逻辑
-func (p *PluginService) Dispatch(wg *sync.WaitGroup) {
-	log.Info("PluginService is running", "id", p.GetId())
-	p.BaseService.Dispatch(wg) // 调用基类的 Run 方法执行基本的消息处理逻辑
 }
 
 // Stop 重写了 BaseService 的 Stop 方法，以提供特定的停止逻辑
