@@ -95,7 +95,8 @@ func NewBaseService(ctx context.Context, scheduler *Scheduler) Service {
 
 func (s *BaseService) Register(name string, fn HandlerFunc) {
 	if _, ok := s.handlers[name]; ok {
-		panic(fmt.Sprintf("function %s: already registered", name))
+		log.Error("already registered", "name", name)
+		return
 	}
 	s.handlers[name] = fn
 }
@@ -339,7 +340,6 @@ func (s *Scheduler) Send(from, to uint64, content *Content) error {
 }
 
 func (s *Scheduler) response(from, to uint64, content *Content) error {
-	content.Session = s.NewSessionId()
 	content.proto = MESSAGE_RESPONSE
 	msg := &Message{
 		From:    from,
@@ -360,6 +360,7 @@ func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error)
 	}
 	err := s.rawSend(msg)
 	if err != nil {
+		close(content.chanRet) // 发送失败时关闭 channel
 		return nil, err
 	}
 
@@ -368,6 +369,7 @@ func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error)
 	case ri := <-content.chanRet:
 		return ri.ret, ri.err
 	case <-time.After(timeout):
+		close(content.chanRet) // 超时后关闭 channel
 		return nil, fmt.Errorf("call to service %d timed out", to)
 	}
 }
