@@ -15,14 +15,14 @@ func New(ctx context.Context, scheduler *gtask.Scheduler) gtask.Service {
 	service := &MyPluginService{
 		BaseService: baseService.(*gtask.BaseService),
 	}
-	service.Register("hello", func(args interface{}) interface{} {
+	service.Register("hello", func(arg interface{}) interface{} {
 		log.Info("3in hello handler")
 		return "hello world 3"
 	})
-	service.Register("world", func(args interface{}) interface{} {
+	service.Register("world", func(arg interface{}) interface{} {
 		log.Info("3in world handler")
 
-		ret, err := service.Call(2, &gtask.Content{Name: "hello", Args: "hellocallarg"})
+		ret, err := service.Call(2, &gtask.Content{Name: "hello", Arg: "hellocallarg"})
 		if err != nil {
 			log.Error("call failed.", "err", err)
 		}

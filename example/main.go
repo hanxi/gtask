@@ -15,21 +15,21 @@ func main() {
 	id1, _ := scheduler.RegisterService(s1)
 	id2, _ := scheduler.RegisterService(s2)
 
-	s1.Register("world", func(args interface{}) interface{} {
+	s1.Register("world", func(arg interface{}) interface{} {
 		log.Info("in world handler")
 		return "hello world"
 	})
-	s2.Register("hello", func(args interface{}) interface{} {
+	s2.Register("hello", func(arg interface{}) interface{} {
 		log.Info("in hello handler")
 		return "hello world"
 	})
 	log.Info("debug2")
 
-	err := scheduler.Send(id1, id2, &gtask.Content{Name: "hello", Args: "helloarg"})
+	err := scheduler.Send(id1, id2, &gtask.Content{Name: "hello", Arg: "helloarg"})
 	if err != nil {
 		log.Error("send filed.", "err", err)
 	}
-	err = s2.Send(id1, &gtask.Content{Name: "world", Args: "worldarg"})
+	err = s2.Send(id1, &gtask.Content{Name: "world", Arg: "worldarg"})
 	if err != nil {
 		log.Error("send filed.", "err", err)
 	}
@@ -54,13 +54,13 @@ func main() {
 	id3, _ := scheduler.RegisterService(s3)
 	log.Info("debug4")
 
-	err = s3.Send(id1, &gtask.Content{Name: "world", Args: "worldarg"})
+	err = s3.Send(id1, &gtask.Content{Name: "world", Arg: "worldarg"})
 	if err != nil {
 		log.Error("send filed.", "err", err)
 	}
 	log.Info("debug5")
 
-	err = s1.Send(id3, &gtask.Content{Name: "world", Args: "worldarg"})
+	err = s1.Send(id3, &gtask.Content{Name: "world", Arg: "worldarg"})
 	if err != nil {
 		log.Error("send filed.", "err", err)
 	}

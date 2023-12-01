@@ -2,26 +2,23 @@ package log
 
 import (
 	"log/slog"
+	"os"
 )
 
 var logger *slog.Logger
+var Debug func(msg string, ars ...any)
+var Info func(msg string, ars ...any)
+var Warn func(msg string, ars ...any)
+var Error func(msg string, ars ...any)
 
 func init() {
-	logger = slog.Default()
-}
-
-func Debug(msg string, args ...any) {
-	logger.Debug(msg, args...)
-}
-
-func Info(msg string, args ...any) {
-	logger.Info(msg, args...)
-}
-
-func Warn(msg string, args ...any) {
-	logger.Warn(msg, args...)
-}
-
-func Error(msg string, args ...any) {
-	logger.Error(msg, args...)
+	opts := slog.HandlerOptions{
+		AddSource: true,
+		Level:     slog.LevelDebug,
+	}
+	logger = slog.New(slog.NewTextHandler(os.Stdout, &opts))
+	Debug = logger.Debug
+	Info = logger.Info
+	Warn = logger.Warn
+	Error = logger.Error
 }
