@@ -186,7 +186,7 @@ func (s *BaseService) dispatch(wg *sync.WaitGroup) {
 		case msg := <-s.chanMsg:
 			s.exec(&msg)
 		case <-s.ctx.Done():
-			log.Info("Service is closing")
+			log.Info("Service is closing", "id", s.GetId())
 			return
 		}
 	}
@@ -285,6 +285,7 @@ func (s *Scheduler) Stop() {
 	})
 
 	s.wg.Wait()
+	s.wg.Wait()
 	s.cancel() // 发出关闭调度器的信号
 }
 
@@ -365,12 +366,13 @@ func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error)
 	}
 
 	timeout := time.Duration(config.C.CallTimeout) * time.Second
+	// TODO: 是否需要使用 context.WithTimeout
 	select {
 	case ri := <-content.chanRet:
 		return ri.ret, ri.err
 	case <-time.After(timeout):
 		close(content.chanRet) // 超时后关闭 channel
-		return nil, fmt.Errorf("call to service %d timed out", to)
+		return nil, fmt.Errorf("service %d call to service %d timed out", from, to)
 	}
 }
 

@@ -17,7 +17,7 @@ type Config struct {
 var C = &Config{
 	StackBufLen: 4096, // 报错堆栈长度
 	MsgQueueLen: 4096, // 消息接收队列长度
-	CallTimeout: 10,   // Call超时（秒）
+	CallTimeout: 1,    // Call超时（秒）
 }
 
 var once sync.Once

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/hanxi/gtask/log"
 	"testing"
+	"time"
 )
 
 func TestService(t *testing.T) {
@@ -36,6 +37,7 @@ func TestService(t *testing.T) {
 	})
 	s2.Register("s2func", func(arg interface{}) interface{} {
 		log.Info("s2 in handler", "arg", arg)
+		time.Sleep(2 * time.Second)
 		return "s2func return ret"
 	})
 
