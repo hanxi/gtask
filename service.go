@@ -70,6 +70,10 @@ const (
 	SERVICE_STATUS_DIE
 )
 
+const (
+	SERVICE_ID_SCHEDULER uint64 = 1
+)
+
 type MessageType int
 
 const (
@@ -88,7 +92,7 @@ type BaseService struct {
 }
 
 var nextSessionId uint64
-var nextServiceId uint64
+var nextServiceId uint64 = 1024 // 1~1024 作为特殊服务
 
 func NewSessionId() uint64 {
 	return atomic.AddUint64(&nextSessionId, 1)
@@ -97,17 +101,22 @@ func NewServiceId() uint64 {
 	return atomic.AddUint64(&nextServiceId, 1)
 }
 
-func NewBaseService(ctx context.Context) Service {
+func NewBaseServiceNoId(ctx context.Context) *BaseService {
 	ctx, cancel := context.WithCancel(ctx)
-	id := NewServiceId()
 	return &BaseService{
-		id:        id,
+		id:        uint64(0),
 		messageIn: make(chan Message, config.C.MsgQueueLen),
 		ctx:       ctx,
 		cancel:    cancel,
 		status:    SERVICE_STATUS_CREATE,
 		handlers:  make(map[string]HandlerFunc),
 	}
+}
+
+func NewBaseService(ctx context.Context) *BaseService {
+	s := NewBaseServiceNoId(ctx)
+	s.id = NewServiceId()
+	return s
 }
 
 func (s *BaseService) Register(name string, fn HandlerFunc) {
@@ -314,9 +323,10 @@ type SchedulerService struct {
 }
 
 func NewSchedulerService(ctx context.Context) *SchedulerService {
-	service := NewBaseService(ctx)
+	service := NewBaseServiceNoId(ctx)
+	service.id = SERVICE_ID_SCHEDULER
 	s := &SchedulerService{
-		BaseService:   service.(*BaseService),
+		BaseService:   service,
 		services:      make(map[uint64]Service),
 		allMessageOut: make(chan Message, config.C.MsgQueueLen),
 	}
@@ -419,7 +429,7 @@ type PluginService struct {
 func NewPluginService(ctx context.Context) Service {
 	service := NewBaseService(ctx)
 	return &PluginService{
-		BaseService: service.(*BaseService),
+		BaseService: service,
 	}
 }
 
