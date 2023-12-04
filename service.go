@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"github.com/hanxi/gtask/config"
 	"github.com/hanxi/gtask/log"
-	"os"
-	"os/signal"
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -46,7 +43,7 @@ type CbFunc func(ret interface{}, err error)
 
 // 定义 Service 接口
 type Service interface {
-	Stop()
+	stop()
 	GetID() uint64
 	Send(to uint64, content *Content) error                 // 发送消息
 	Call(to uint64, content *Content) (interface{}, error)  // 同步rpc
@@ -71,7 +68,7 @@ const (
 )
 
 const (
-	SERVICE_ID_SCHEDULER uint64 = 1
+	SERVICE_ID_SCHEDULER uint64 = 1 // 调度服务
 )
 
 type MessageType int
@@ -127,7 +124,7 @@ func (s *BaseService) Register(name string, fn HandlerFunc) {
 	s.handlers[name] = fn
 }
 
-func (s *BaseService) Stop() {
+func (s *BaseService) stop() {
 	s.setStatus(SERVICE_STATUS_DIE)
 	s.cancel()
 }
@@ -315,112 +312,6 @@ func (s *BaseService) AsyncCall(to uint64, content *Content, cb CbFunc) error {
 	return s.rawSend(msg)
 }
 
-type SchedulerService struct {
-	*BaseService
-	services      map[uint64]Service
-	wg            sync.WaitGroup
-	allMessageOut chan Message
-}
-
-func NewSchedulerService(ctx context.Context) *SchedulerService {
-	service := NewBaseServiceNoId(ctx)
-	service.id = SERVICE_ID_SCHEDULER
-	s := &SchedulerService{
-		BaseService:   service,
-		services:      make(map[uint64]Service),
-		allMessageOut: make(chan Message, config.C.MsgQueueLen),
-	}
-	s.Register("registerService", registerService)
-	return s
-}
-
-func (s *SchedulerService) wait() {
-	// 监听系统信号
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	select {
-	case <-signals:
-		// 收到信号，取消 context
-		log.Info("Scheduler received an interrupt signal, stopping services...")
-		s.cancel()
-	}
-}
-
-func (s *SchedulerService) run(wg *sync.WaitGroup) {
-	defer wg.Done()
-	log.Info("in run", "service", s)
-	s.setStatus(SERVICE_STATUS_RUNNING)
-
-	for {
-		select {
-		case msg := <-s.getMessageIn():
-			s.exec(&msg)
-		case msg := <-s.allMessageOut:
-			if service, ok := s.services[msg.To]; ok {
-				service.getMessageIn() <- msg
-			} else {
-				log.Error("No service found", "ID", msg.To)
-			}
-		case <-s.ctx.Done():
-			log.Info("Service is closing", "id", s.GetID())
-			break
-		}
-	}
-	s.Stop()
-}
-
-func (s *SchedulerService) RegisterService(service Service) error {
-	ret, err := s.Call(1, &Content{Name: "registerService", Arg: &registerServiceArg{s: s, service: service}})
-	if err != nil {
-		return err
-	}
-	if ret != nil {
-		return ret.(error)
-	}
-	return nil
-}
-
-type registerServiceArg struct {
-	s       *SchedulerService
-	service Service
-}
-
-func registerService(arg interface{}) interface{} {
-	s := arg.(*registerServiceArg).s
-	service := arg.(*registerServiceArg).service
-	return s.registerService(service)
-}
-
-func (s *SchedulerService) registerService(service Service) error {
-	id := service.GetID()
-	if service.getStatus() != SERVICE_STATUS_CREATE {
-		log.Error("Service already register.", "id", service.GetID())
-		return fmt.Errorf("Service already register. id:%d", id)
-	}
-
-	_, exist := s.services[id]
-	if exist {
-		log.Error("registerService id already exist.", "id", id)
-		return fmt.Errorf("Service with ID %d already exists", id)
-	}
-
-	s.services[id] = service
-	service.setStatus(SERVICE_STATUS_INIT)
-	service.setMessageOut(s.allMessageOut)
-	s.wg.Add(1)
-	go service.run(&s.wg)
-	return nil
-}
-
-func (s *SchedulerService) Stop() {
-	for id, service := range s.services {
-		service.Stop()
-		delete(s.services, id)
-	}
-	s.wg.Wait()
-	s.BaseService.Stop()
-}
-
 // PluginService 是一个实现了 Service 接口的插件服务
 type PluginService struct {
 	*BaseService
@@ -433,8 +324,8 @@ func NewPluginService(ctx context.Context) Service {
 	}
 }
 
-// Stop 重写了 BaseService 的 Stop 方法，以提供特定的停止逻辑
-func (p *PluginService) Stop() {
+// Stop 重写了 BaseService 的 stop 方法，以提供特定的停止逻辑
+func (p *PluginService) stop() {
 	log.Info("PluginService is stopping", "id", p.GetID())
-	p.BaseService.Stop() // 调用基类的 Stop 方法来执行取消操作
+	p.BaseService.stop() // 调用基类的 Stop 方法来执行取消操作
 }

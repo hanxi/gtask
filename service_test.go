@@ -34,7 +34,12 @@ func TestSchedulerService(t *testing.T) {
 	scheduler.Send(s1.GetID(), &Content{Name: "f1", Arg: "f1arg"})
 	s1.Send(scheduler.GetID(), &Content{Name: "registerService", Arg: &registerServiceArg{s: scheduler, service: s1}})
 
-	// TODO: 把 scheduler goroutine 安全接口封装
+	// 开服务 spawn
+	// 关服务 kill
+	// 命名 register
+	// 查询 queryservice
+	// 创建唯一服务 uniqueservice
+	// 发送消息
 
 	scheduler.wait()
 }
