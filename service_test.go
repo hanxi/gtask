@@ -2,12 +2,52 @@ package gtask
 
 import (
 	"context"
-	"fmt"
 	"github.com/hanxi/gtask/log"
+	"sync"
 	"testing"
-	"time"
 )
 
+func TestBasicService(t *testing.T) {
+	log.Info("in TestBasicService")
+	bs := NewBaseService(context.Background())
+	bs.Register("bs1", func(arg interface{}) interface{} {
+		log.Info("in bs1", "arg", arg)
+		return "return bs1"
+	})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go bs.run(&wg)
+}
+
+func TestSchedulerService(t *testing.T) {
+	log.Info("in TestSchedulerService")
+	scheduler := NewSchedulerService(context.Background())
+	scheduler.registerService(scheduler) // 只能在 scheduler 里调用
+
+	s1 := NewPluginService(context.Background())
+	s1.Register("f1", func(arg interface{}) interface{} {
+		log.Info("in s1 f1", "arg", arg)
+		return "return s1 f1"
+	})
+	scheduler.RegisterService(s1) // 任意 goroutine 里调用都可以
+	scheduler.Send(s1.GetID(), &Content{Name: "f1", Arg: "f1arg"})
+	s1.Send(scheduler.GetID(), &Content{Name: "registerService", Arg: &registerServiceArg{s: scheduler, service: s1}})
+
+	// TODO: 把 scheduler goroutine 安全接口封装
+
+	scheduler.wait()
+}
+
+func BenchmarkNewSessionIdParallel(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			NewSessionId()
+		}
+	})
+}
+
+/*
 func TestService(t *testing.T) {
 	log.Info("debug1")
 	scheduler := NewScheduler()
@@ -64,3 +104,4 @@ func TestService(t *testing.T) {
 	scheduler.Loop()
 	fmt.Println("debug end")
 }
+*/

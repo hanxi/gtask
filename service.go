@@ -14,44 +14,51 @@ import (
 	"time"
 )
 
+// rpc 消息
 type Message struct {
 	From    uint64
 	To      uint64
 	Content *Content
 }
 
+// rpc 消息内容
 type Content struct {
-	Name string
-	Arg  interface{}
-
-	chanRet chan *RetInfo
+	Name    string      // 函数名
+	Arg     interface{} // 参数
 	Session uint64
-	cb      CbFunc
-	proto   MessageType
+
+	chanRet chan *RetInfo // 返回值
+	cb      CbFunc        // AsyncCall 回调函数
+	proto   MessageType   // 消息类型
 }
 
+// rpc 返回值
 type RetInfo struct {
 	ret interface{}
 	err error
 }
 
+// rpc 处理函数
 type HandlerFunc func(arg interface{}) interface{}
+
+// AsyncCall 回调函数
 type CbFunc func(ret interface{}, err error)
 
 // 定义 Service 接口
 type Service interface {
 	Stop()
-	GetId() uint64
+	GetID() uint64
 	Send(to uint64, content *Content) error                 // 发送消息
 	Call(to uint64, content *Content) (interface{}, error)  // 同步rpc
 	AsyncCall(to uint64, content *Content, cb CbFunc) error // 异步rpc
-	Register(name string, fn HandlerFunc)
+	Register(name string, fn HandlerFunc)                   // 注册rpc处理函数
 
-	sendMessage(msg *Message) error
-	dispatch(wg *sync.WaitGroup)
-	setId(id uint64)
+	run(wg *sync.WaitGroup) // 消息处理
+	rawSend(msg *Message) error
 	getStatus() ServiceStatus
 	setStatus(status ServiceStatus)
+	setMessageOut(messageOut chan Message)
+	getMessageIn() chan Message
 }
 
 type ServiceStatus int
@@ -71,24 +78,34 @@ const (
 )
 
 type BaseService struct {
-	id        uint64
-	chanMsg   chan Message
-	ctx       context.Context
-	cancel    context.CancelFunc
-	status    ServiceStatus
-	scheduler *Scheduler
-	handlers  map[string]HandlerFunc
+	id         uint64
+	messageIn  chan Message
+	messageOut chan Message
+	ctx        context.Context
+	cancel     context.CancelFunc
+	status     ServiceStatus
+	handlers   map[string]HandlerFunc
 }
 
-func NewBaseService(ctx context.Context, scheduler *Scheduler) Service {
+var nextSessionId uint64
+var nextServiceId uint64
+
+func NewSessionId() uint64 {
+	return atomic.AddUint64(&nextSessionId, 1)
+}
+func NewServiceId() uint64 {
+	return atomic.AddUint64(&nextServiceId, 1)
+}
+
+func NewBaseService(ctx context.Context) Service {
 	ctx, cancel := context.WithCancel(ctx)
+	id := NewServiceId()
 	return &BaseService{
-		id:        uint64(0),
-		chanMsg:   make(chan Message, config.C.MsgQueueLen),
+		id:        id,
+		messageIn: make(chan Message, config.C.MsgQueueLen),
 		ctx:       ctx,
 		cancel:    cancel,
 		status:    SERVICE_STATUS_CREATE,
-		scheduler: scheduler,
 		handlers:  make(map[string]HandlerFunc),
 	}
 }
@@ -104,6 +121,14 @@ func (s *BaseService) Register(name string, fn HandlerFunc) {
 func (s *BaseService) Stop() {
 	s.setStatus(SERVICE_STATUS_DIE)
 	s.cancel()
+}
+
+func (s *BaseService) getMessageIn() chan Message {
+	return s.messageIn
+}
+
+func (s *BaseService) setMessageOut(messageOut chan Message) {
+	s.messageOut = messageOut
 }
 
 func (s *BaseService) ret(msg *Message, ri *RetInfo) (err error) {
@@ -151,12 +176,12 @@ func (s *BaseService) exec(msg *Message) {
 	if content.proto == MESSAGE_RESPONSE {
 		cbFunc := content.cb
 		if cbFunc == nil {
-			log.Error("Service cb not exist", "id", s.GetId())
+			log.Error("Service cb not exist", "id", s.GetID())
 			return
 		}
 		ri, ok := content.Arg.(*RetInfo)
 		if !ok {
-			log.Error("Not RetInfo", "id", s.GetId(), "arg", content.Arg)
+			log.Error("Not RetInfo", "id", s.GetID(), "arg", content.Arg)
 			return
 		}
 		cbFunc(ri.ret, ri.err)
@@ -173,34 +198,30 @@ func (s *BaseService) exec(msg *Message) {
 	}
 
 	ret := handFunc(content.Arg)
-	log.Info("Service handler ok", "id", s.GetId(), "handler", content.Name, "ret", ret, "arg", content.Arg)
+	log.Info("Service handler ok", "id", s.GetID(), "handler", content.Name, "ret", ret, "arg", content.Arg)
 	s.ret(msg, &RetInfo{ret: ret})
 }
 
-func (s *BaseService) dispatch(wg *sync.WaitGroup) {
+func (s *BaseService) run(wg *sync.WaitGroup) {
 	defer wg.Done()
-	log.Info("in dispatch", "service", s)
+	log.Info("in run ", "service", s)
 	s.setStatus(SERVICE_STATUS_RUNNING)
 	for {
 		select {
-		case msg := <-s.chanMsg:
+		case msg := <-s.messageIn:
 			s.exec(&msg)
 		case <-s.ctx.Done():
-			log.Info("Service is closing", "id", s.GetId())
+			log.Info("Service is closing", "id", s.GetID())
 			return
 		}
 	}
 }
 
-func (s *BaseService) GetId() uint64 {
+func (s *BaseService) GetID() uint64 {
 	return s.id
 }
 
-func (s *BaseService) setId(id uint64) {
-	s.id = id
-}
-
-func (s *BaseService) sendMessage(msg *Message) (err error) {
+func (s *BaseService) rawSend(msg *Message) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = r.(error)
@@ -208,7 +229,7 @@ func (s *BaseService) sendMessage(msg *Message) (err error) {
 	}()
 
 	select {
-	case s.chanMsg <- *msg:
+	case s.messageOut <- *msg:
 		return nil
 	case <-s.ctx.Done():
 		err = fmt.Errorf("failed to send message: service is stopping")
@@ -227,135 +248,32 @@ func (s *BaseService) setStatus(status ServiceStatus) {
 }
 
 func (s *BaseService) Send(to uint64, content *Content) error {
-	return s.scheduler.Send(s.id, to, content)
+	content.Session = NewSessionId()
+	content.proto = MESSAGE_REQUEST
+	msg := &Message{
+		From:    s.GetID(),
+		To:      to,
+		Content: content,
+	}
+	return s.rawSend(msg)
 }
 
 func (s *BaseService) response(to uint64, content *Content) error {
-	return s.scheduler.response(s.id, to, content)
+	content.proto = MESSAGE_RESPONSE
+	msg := &Message{
+		From:    s.GetID(),
+		To:      to,
+		Content: content,
+	}
+	return s.rawSend(msg)
 }
 
 func (s *BaseService) Call(to uint64, content *Content) (interface{}, error) {
-	return s.scheduler.Call(s.id, to, content)
-}
-
-func (s *BaseService) AsyncCall(to uint64, content *Content, cb CbFunc) error {
-	return s.scheduler.AsyncCall(s.id, to, content, cb)
-}
-
-type Scheduler struct {
-	nextServiceId uint64
-	nextSessionId uint64
-	services      sync.Map
-	wg            sync.WaitGroup
-	ctx           context.Context
-	cancel        context.CancelFunc
-}
-
-func NewScheduler() *Scheduler {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Scheduler{
-		ctx:    ctx,
-		cancel: cancel,
-	}
-}
-
-func (s *Scheduler) NewSessionId() uint64 {
-	return atomic.AddUint64(&s.nextSessionId, 1)
-}
-
-func (s *Scheduler) RegisterService(service Service) (uint64, error) {
-	id := atomic.AddUint64(&s.nextServiceId, 1)
-	_, exist := s.services.Load(id)
-	if exist {
-		return 0, fmt.Errorf("Service with ID %d already exists", id)
-	}
-	service.setId(id) // 设置服务的 ID
-	s.services.Store(id, service)
-	service.setStatus(SERVICE_STATUS_INIT)
-	return id, nil
-}
-
-func (s *Scheduler) Stop() {
-	s.services.Range(func(key, value interface{}) bool {
-		id := key.(uint64)
-		service := value.(Service)
-		service.Stop()
-		s.services.Delete(id)
-		return true
-	})
-
-	s.wg.Wait()
-	s.wg.Wait()
-	s.cancel() // 发出关闭调度器的信号
-}
-
-func (s *Scheduler) Dispatch(service Service) error {
-	log.Info("Dispatch", "service", service)
-	if service.getStatus() != SERVICE_STATUS_INIT {
-		return fmt.Errorf("Scheduler RegisterService failed. id:%d", service.GetId())
-	}
-	s.wg.Add(1)
-	go service.dispatch(&s.wg)
-	return nil
-}
-
-func (s *Scheduler) Loop() {
-	// 监听系统信号
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-
-	select {
-	case <-signals:
-		// 收到信号，取消 context
-		log.Info("Scheduler received an interrupt signal, stopping services...")
-		s.cancel()
-	case <-s.ctx.Done():
-		// Context 被取消，退出
-		log.Info("Scheduler is shutting down...")
-	}
-
-	s.Stop()
-}
-
-func (s *Scheduler) rawSend(msg *Message) error {
-	val, ok := s.services.Load(msg.To)
-	if !ok {
-		return fmt.Errorf("service with id %d does not exist", msg.To)
-	}
-	service := val.(Service)
-	if err := service.sendMessage(msg); err != nil {
-		return fmt.Errorf("failed to send message to service %d: %v", msg.To, err)
-	}
-	return nil
-}
-
-func (s *Scheduler) Send(from, to uint64, content *Content) error {
-	content.Session = s.NewSessionId()
-	content.proto = MESSAGE_REQUEST
-	msg := &Message{
-		From:    from,
-		To:      to,
-		Content: content,
-	}
-	return s.rawSend(msg)
-}
-
-func (s *Scheduler) response(from, to uint64, content *Content) error {
-	content.proto = MESSAGE_RESPONSE
-	msg := &Message{
-		From:    from,
-		To:      to,
-		Content: content,
-	}
-	return s.rawSend(msg)
-}
-
-func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error) {
 	content.chanRet = make(chan *RetInfo, 1)
-	content.Session = s.NewSessionId()
+	content.Session = NewSessionId()
 	content.proto = MESSAGE_REQUEST
 	msg := &Message{
-		From:    from,
+		From:    s.GetID(),
 		To:      to,
 		Content: content,
 	}
@@ -372,20 +290,125 @@ func (s *Scheduler) Call(from, to uint64, content *Content) (interface{}, error)
 		return ri.ret, ri.err
 	case <-time.After(timeout):
 		close(content.chanRet) // 超时后关闭 channel
-		return nil, fmt.Errorf("service %d call to service %d timed out", from, to)
+		return nil, fmt.Errorf("service %d call to service %d timed out", s.GetID(), to)
 	}
 }
 
-func (s *Scheduler) AsyncCall(from, to uint64, content *Content, cb CbFunc) error {
-	content.Session = s.NewSessionId()
+func (s *BaseService) AsyncCall(to uint64, content *Content, cb CbFunc) error {
+	content.Session = NewSessionId()
 	content.cb = cb
 	content.proto = MESSAGE_REQUEST
 	msg := &Message{
-		From:    from,
+		From:    s.GetID(),
 		To:      to,
 		Content: content,
 	}
 	return s.rawSend(msg)
+}
+
+type SchedulerService struct {
+	*BaseService
+	services      map[uint64]Service
+	wg            sync.WaitGroup
+	allMessageOut chan Message
+}
+
+func NewSchedulerService(ctx context.Context) *SchedulerService {
+	service := NewBaseService(ctx)
+	s := &SchedulerService{
+		BaseService:   service.(*BaseService),
+		services:      make(map[uint64]Service),
+		allMessageOut: make(chan Message, config.C.MsgQueueLen),
+	}
+	s.Register("registerService", registerService)
+	return s
+}
+
+func (s *SchedulerService) wait() {
+	// 监听系统信号
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	select {
+	case <-signals:
+		// 收到信号，取消 context
+		log.Info("Scheduler received an interrupt signal, stopping services...")
+		s.cancel()
+	}
+}
+
+func (s *SchedulerService) run(wg *sync.WaitGroup) {
+	defer wg.Done()
+	log.Info("in run", "service", s)
+	s.setStatus(SERVICE_STATUS_RUNNING)
+
+	for {
+		select {
+		case msg := <-s.getMessageIn():
+			s.exec(&msg)
+		case msg := <-s.allMessageOut:
+			if service, ok := s.services[msg.To]; ok {
+				service.getMessageIn() <- msg
+			} else {
+				log.Error("No service found", "ID", msg.To)
+			}
+		case <-s.ctx.Done():
+			log.Info("Service is closing", "id", s.GetID())
+			break
+		}
+	}
+	s.Stop()
+}
+
+func (s *SchedulerService) RegisterService(service Service) error {
+	ret, err := s.Call(1, &Content{Name: "registerService", Arg: &registerServiceArg{s: s, service: service}})
+	if err != nil {
+		return err
+	}
+	if ret != nil {
+		return ret.(error)
+	}
+	return nil
+}
+
+type registerServiceArg struct {
+	s       *SchedulerService
+	service Service
+}
+
+func registerService(arg interface{}) interface{} {
+	s := arg.(*registerServiceArg).s
+	service := arg.(*registerServiceArg).service
+	return s.registerService(service)
+}
+
+func (s *SchedulerService) registerService(service Service) error {
+	id := service.GetID()
+	if service.getStatus() != SERVICE_STATUS_CREATE {
+		log.Error("Service already register.", "id", service.GetID())
+		return fmt.Errorf("Service already register. id:%d", id)
+	}
+
+	_, exist := s.services[id]
+	if exist {
+		log.Error("registerService id already exist.", "id", id)
+		return fmt.Errorf("Service with ID %d already exists", id)
+	}
+
+	s.services[id] = service
+	service.setStatus(SERVICE_STATUS_INIT)
+	service.setMessageOut(s.allMessageOut)
+	s.wg.Add(1)
+	go service.run(&s.wg)
+	return nil
+}
+
+func (s *SchedulerService) Stop() {
+	for id, service := range s.services {
+		service.Stop()
+		delete(s.services, id)
+	}
+	s.wg.Wait()
+	s.BaseService.Stop()
 }
 
 // PluginService 是一个实现了 Service 接口的插件服务
@@ -393,8 +416,8 @@ type PluginService struct {
 	*BaseService
 }
 
-func NewPluginService(ctx context.Context, scheduler *Scheduler) Service {
-	service := NewBaseService(ctx, scheduler)
+func NewPluginService(ctx context.Context) Service {
+	service := NewBaseService(ctx)
 	return &PluginService{
 		BaseService: service.(*BaseService),
 	}
@@ -402,6 +425,6 @@ func NewPluginService(ctx context.Context, scheduler *Scheduler) Service {
 
 // Stop 重写了 BaseService 的 Stop 方法，以提供特定的停止逻辑
 func (p *PluginService) Stop() {
-	log.Info("PluginService is stopping", "id", p.GetId())
+	log.Info("PluginService is stopping", "id", p.GetID())
 	p.BaseService.Stop() // 调用基类的 Stop 方法来执行取消操作
 }
