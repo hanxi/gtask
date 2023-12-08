@@ -5,12 +5,15 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+
+	"github.com/hanxi/gtask/log"
 )
 
 type Config struct {
-	StackBufLen int `json:"stackBufLen"`
-	MsgQueueLen int `json:"msgQueueLen"`
-	CallTimeout int `json:"callTimeout"`
+	StackBufLen int
+	MsgQueueLen int
+	CallTimeout int
+	LogLevel    string
 }
 
 // 包级别的配置实例，拥有默认值
@@ -18,6 +21,7 @@ var C = &Config{
 	StackBufLen: 4096, // 报错堆栈长度
 	MsgQueueLen: 4096, // 消息接收队列长度
 	CallTimeout: 1,    // Call超时（秒）
+	LogLevel:    "debug",
 }
 
 var once sync.Once
@@ -37,7 +41,7 @@ func Load(configPath string) error {
 		if decodeErr := decoder.Decode(C); decodeErr != nil {
 			slog.Error("Error decoding config file. Using default config.", "file", decodeErr)
 		}
-		// TODO: 根据配置修改 log 配置
+		log.SetLevel(C.LogLevel)
 	})
 	return err
 }

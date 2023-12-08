@@ -3,12 +3,13 @@ package gtask
 import (
 	"context"
 	"fmt"
-	"github.com/hanxi/gtask/config"
-	"github.com/hanxi/gtask/log"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/hanxi/gtask/config"
+	"github.com/hanxi/gtask/log"
 )
 
 // rpc 消息
