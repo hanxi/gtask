@@ -7,6 +7,7 @@ import (
 	"github.com/hanxi/gtask/log"
 	"os"
 	"os/signal"
+	"plugin"
 	"sync"
 	"syscall"
 )
@@ -18,7 +19,7 @@ type SchedulerService struct {
 	allMessageOut chan Message
 }
 
-func NewSchedulerService(ctx context.Context) *SchedulerService {
+func newSchedulerService(ctx context.Context) *SchedulerService {
 	service := NewBaseServiceNoId(ctx)
 	service.id = SERVICE_ID_SCHEDULER
 	s := &SchedulerService{
@@ -26,10 +27,12 @@ func NewSchedulerService(ctx context.Context) *SchedulerService {
 		services:      make(map[uint64]Service),
 		allMessageOut: make(chan Message, config.C.MsgQueueLen),
 	}
-	s.Register("registerService", registerService)
+	s.Register("rpcRegisterService", s.rpcRegisterService)
+	s.Register("rpcNewServiceFromPlugin", s.rpcNewServiceFromPlugin)
 	return s
 }
 
+// 主 goroutine 里运行
 func (s *SchedulerService) wait() {
 	// 监听系统信号
 	signals := make(chan os.Signal, 1)
@@ -38,7 +41,8 @@ func (s *SchedulerService) wait() {
 	case <-signals:
 		// 收到信号，取消 context
 		log.Info("Scheduler received an interrupt signal, stopping services...")
-		s.cancel()
+	case <-s.ctx.Done():
+		log.Info("Service is closing in wait", "id", s.GetID())
 	}
 	s.stop()
 }
@@ -65,28 +69,6 @@ func (s *SchedulerService) run(wg *sync.WaitGroup) {
 	}
 }
 
-func (s *SchedulerService) RegisterService(service Service) error {
-	ret, err := s.Call(SERVICE_ID_SCHEDULER, &Content{Name: "registerService", Arg: &registerServiceArg{s: s, service: service}})
-	if err != nil {
-		return err
-	}
-	if ret != nil {
-		return ret.(error)
-	}
-	return nil
-}
-
-type registerServiceArg struct {
-	s       *SchedulerService
-	service Service
-}
-
-func registerService(arg interface{}) interface{} {
-	s := arg.(*registerServiceArg).s
-	service := arg.(*registerServiceArg).service
-	return s.registerService(service)
-}
-
 func (s *SchedulerService) registerService(service Service) error {
 	id := service.GetID()
 	if service.getStatus() != SERVICE_STATUS_CREATE {
@@ -111,11 +93,50 @@ func (s *SchedulerService) registerService(service Service) error {
 func (s *SchedulerService) stop() {
 	for id, service := range s.services {
 		if id != SERVICE_ID_SCHEDULER {
-			service.stop()
+			// 发消息的方式关闭服务
+			s.Call(id, &Content{Name: "rpcStop"})
 		}
 		log.Info("stop", "id", service.GetID())
 		delete(s.services, id)
 	}
-	s.wg.Wait()
 	s.BaseService.stop()
+	s.wg.Wait()
+}
+
+func (s *SchedulerService) rpcRegisterService(arg interface{}) interface{} {
+	service := arg.(Service)
+	return s.registerService(service)
+}
+
+func (s *SchedulerService) rpcNewServiceFromPlugin(arg interface{}) interface{} {
+	serviceFile := arg.(string)
+	id, err := s.newServiceFromPlugin(serviceFile)
+	return &NewServiceFromPluginRet{ID: id, Err: err}
+}
+
+type NewServiceFromPluginRet struct {
+	ID  uint64
+	Err error
+}
+
+// 从插件中开服务
+func (s *SchedulerService) newServiceFromPlugin(serviceFile string) (uint64, error) {
+	p, err := plugin.Open(serviceFile + ".so") // 打开插件文件
+	if err != nil {
+		return 0, err
+	}
+
+	newFunc, err := p.Lookup("NewService") // 查找插件导出的NewService函数
+	if err != nil {
+		return 0, err
+	}
+
+	newServiceFunc, ok := newFunc.(func(ctx context.Context) Service) // 类型断言为正确的函数签名
+	if !ok {
+		return 0, fmt.Errorf("Plugin %s has no 'NewService' function of the correct type", serviceFile)
+	}
+
+	service := newServiceFunc(context.Background()) // 调用函数获取Service实例
+	s.registerService(service)
+	return service.GetID(), nil
 }

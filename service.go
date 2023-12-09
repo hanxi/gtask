@@ -101,7 +101,7 @@ func NewServiceId() uint64 {
 
 func NewBaseServiceNoId(ctx context.Context) *BaseService {
 	ctx, cancel := context.WithCancel(ctx)
-	return &BaseService{
+	s := &BaseService{
 		id:        uint64(0),
 		messageIn: make(chan Message, config.C.MsgQueueLen),
 		ctx:       ctx,
@@ -109,6 +109,8 @@ func NewBaseServiceNoId(ctx context.Context) *BaseService {
 		status:    SERVICE_STATUS_CREATE,
 		handlers:  make(map[string]HandlerFunc),
 	}
+	s.Register("rpcStop", s.rpcStop)
+	return s
 }
 
 func NewBaseService(ctx context.Context) *BaseService {
@@ -123,6 +125,7 @@ func (s *BaseService) Register(name string, fn HandlerFunc) {
 		return
 	}
 	s.handlers[name] = fn
+	log.Debug("Register", "name", name, "fn", fn)
 }
 
 func (s *BaseService) stop() {
@@ -313,20 +316,11 @@ func (s *BaseService) AsyncCall(to uint64, content *Content, cb CbFunc) error {
 	return s.rawSend(msg)
 }
 
-// PluginService 是一个实现了 Service 接口的插件服务
-type PluginService struct {
-	*BaseService
+type rpcStopArg struct {
+	s Service
 }
 
-func NewPluginService(ctx context.Context) Service {
-	service := NewBaseService(ctx)
-	return &PluginService{
-		BaseService: service,
-	}
-}
-
-// Stop 重写了 BaseService 的 stop 方法，以提供特定的停止逻辑
-func (p *PluginService) stop() {
-	log.Info("PluginService is stopping", "id", p.GetID())
-	p.BaseService.stop() // 调用基类的 Stop 方法来执行取消操作
+func (s *BaseService) rpcStop(arg interface{}) interface{} {
+	s.stop()
+	return nil
 }

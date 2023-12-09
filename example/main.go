@@ -12,12 +12,12 @@ func main() {
 
 	s1 := gtask.NewBaseService(context.Background(), scheduler)
 	s2 := gtask.NewPluginService(context.Background(), scheduler)
-	id1, _ := scheduler.RegisterService(s1)
+	id1, _ := RegisterService(s1)
 	err := scheduler.Dispatch(s1)
 	if err != nil {
 		log.Error("Dispatch s1 failed.", "err", err)
 	}
-	id2, _ := scheduler.RegisterService(s2)
+	id2, _ := RegisterService(s2)
 	err = scheduler.Dispatch(s2)
 	if err != nil {
 		log.Error("Dispatch s2 failed.", "err", err)
@@ -59,7 +59,7 @@ func main() {
 	}
 
 	s3 := newServiceFunc(context.Background(), scheduler) // 调用函数获取Service实例
-	id3, _ := scheduler.RegisterService(s3)
+	id3, _ := RegisterService(s3)
 	err = scheduler.Dispatch(s3)
 	if err != nil {
 		log.Error("Dispatch failed.", "err", err)

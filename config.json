@@ -1,0 +1,6 @@
+{
+  "StackBufLen": 4096,
+  "MsgQueueLen": 4096,
+  "CallTimeout": 1,
+  "LogLevel": "debug"
+}

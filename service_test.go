@@ -22,7 +22,7 @@ func TestBasicService(t *testing.T) {
 
 func TestSchedulerService(t *testing.T) {
 	log.Info("in TestSchedulerService")
-	scheduler := NewSchedulerService(context.Background())
+	scheduler := newSchedulerService(context.Background())
 	scheduler.registerService(scheduler) // 只能在 scheduler 里调用
 
 	s1 := NewPluginService(context.Background())
@@ -30,9 +30,9 @@ func TestSchedulerService(t *testing.T) {
 		log.Info("in s1 f1", "arg", arg)
 		return "return s1 f1"
 	})
-	scheduler.RegisterService(s1) // 任意 goroutine 里调用都可以
+	RegisterService(s1) // 任意 goroutine 里调用都可以
 	scheduler.Send(s1.GetID(), &Content{Name: "f1", Arg: "f1arg"})
-	s1.Send(scheduler.GetID(), &Content{Name: "registerService", Arg: &registerServiceArg{s: scheduler, service: s1}})
+	s1.Send(scheduler.GetID(), &Content{Name: "rpcRegisterService", Arg: s1})
 
 	// 开服务 spawn
 	// 关服务 kill

@@ -24,24 +24,32 @@ var C = &Config{
 	LogLevel:    "debug",
 }
 
+func onConfigInit() {
+	log.SetLevel(C.LogLevel)
+}
+
+func doLoad(configPath string) {
+	file, fileErr := os.Open(configPath)
+	if fileErr != nil {
+		slog.Error("Error opening config file. Using default config", "file", fileErr)
+		return
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	if decodeErr := decoder.Decode(C); decodeErr != nil {
+		slog.Error("Error decoding config file. Using default config.", "file", decodeErr)
+	}
+}
+
 var once sync.Once
 
 // Load 读取和解析配置文件，覆盖默认值
 func Load(configPath string) error {
 	var err error
 	once.Do(func() {
-		file, fileErr := os.Open(configPath)
-		if fileErr != nil {
-			slog.Error("Error opening config file. Using default config", "file", fileErr)
-			return
-		}
-		defer file.Close()
-
-		decoder := json.NewDecoder(file)
-		if decodeErr := decoder.Decode(C); decodeErr != nil {
-			slog.Error("Error decoding config file. Using default config.", "file", decodeErr)
-		}
-		log.SetLevel(C.LogLevel)
+		doLoad(configPath)
+		onConfigInit()
 	})
 	return err
 }
