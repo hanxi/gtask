@@ -71,7 +71,7 @@ func (s *SchedulerService) run(wg *sync.WaitGroup) {
 
 func (s *SchedulerService) registerService(service Service) error {
 	id := service.GetID()
-	if service.getStatus() != SERVICE_STATUS_CREATE {
+	if service.GetStatus() != SERVICE_STATUS_CREATE {
 		log.Error("Service already register.", "id", service.GetID())
 		return fmt.Errorf("Service already register. id:%d", id)
 	}
@@ -94,7 +94,7 @@ func (s *SchedulerService) stop() {
 	for id, service := range s.services {
 		if id != SERVICE_ID_SCHEDULER {
 			// 发消息的方式关闭服务
-			s.Call(id, &Content{Name: "rpcStop"})
+			s.Call(id, Content{Name: "rpcStop"})
 		}
 		log.Info("stop", "id", service.GetID())
 		delete(s.services, id)

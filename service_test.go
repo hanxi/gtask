@@ -31,8 +31,8 @@ func TestSchedulerService(t *testing.T) {
 		return "return s1 f1"
 	})
 	RegisterService(s1) // 任意 goroutine 里调用都可以
-	scheduler.Send(s1.GetID(), &Content{Name: "f1", Arg: "f1arg"})
-	s1.Send(scheduler.GetID(), &Content{Name: "rpcRegisterService", Arg: s1})
+	scheduler.Send(s1.GetID(), Content{Name: "f1", Arg: "f1arg"})
+	s1.Send(scheduler.GetID(), Content{Name: "rpcRegisterService", Arg: s1})
 
 	// 开服务 spawn
 	// 关服务 kill

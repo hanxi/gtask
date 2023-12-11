@@ -34,18 +34,18 @@ func Run() {
 
 func Stop() {
 	// 需要确保Call函数没并发问题
-	scheduler.Call(SERVICE_ID_SCHEDULER, &Content{Name: "rpcStop"})
+	scheduler.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcStop"})
 }
 
 // 关服务
 func Kill(addr uint64) {
 	// 需要确保Send函数没并发问题
-	scheduler.Send(addr, &Content{Name: "rpcStop"})
+	scheduler.Send(addr, Content{Name: "rpcStop"})
 }
 
 // 注册一个服务
 func RegisterService(s Service) error {
-	ret, err := s.Call(SERVICE_ID_SCHEDULER, &Content{Name: "rpcRegisterService", Arg: s})
+	ret, err := s.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcRegisterService", Arg: s})
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func RegisterService(s Service) error {
 // 从插件加载服务
 func NewServiceFromPlugin(serviceFile string) (uint64, error) {
 	// 需要确保Call函数没并发问题
-	ret, err := scheduler.Call(SERVICE_ID_SCHEDULER, &Content{Name: "rpcNewServiceFromPlugin", Arg: serviceFile})
+	ret, err := scheduler.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcNewServiceFromPlugin", Arg: serviceFile})
 	if err != nil {
 		return 0, err
 	}

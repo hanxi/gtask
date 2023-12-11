@@ -46,14 +46,13 @@ type CbFunc func(ret interface{}, err error)
 type Service interface {
 	stop()
 	GetID() uint64
-	Send(to uint64, content *Content) error                 // 发送消息
-	Call(to uint64, content *Content) (interface{}, error)  // 同步rpc
-	AsyncCall(to uint64, content *Content, cb CbFunc) error // 异步rpc
-	Register(name string, fn HandlerFunc)                   // 注册rpc处理函数
+	Send(to uint64, content Content) error                 // 发送消息
+	Call(to uint64, content Content) (interface{}, error)  // 同步rpc
+	AsyncCall(to uint64, content Content, cb CbFunc) error // 异步rpc
+	Register(name string, fn HandlerFunc)                  // 注册rpc处理函数
+	GetStatus() ServiceStatus
 
 	run(wg *sync.WaitGroup) // 消息处理
-	rawSend(msg *Message) error
-	getStatus() ServiceStatus
 	setStatus(status ServiceStatus)
 	setMessageOut(messageOut chan Message)
 	getMessageIn() chan Message
@@ -156,7 +155,7 @@ func (s *BaseService) ret(msg *Message, ri *RetInfo) (err error) {
 	if content.cb == nil {
 		content.chanRet <- ri
 	} else {
-		newContent := &Content{
+		newContent := Content{
 			Arg:     ri,
 			Session: content.Session,
 			cb:      content.cb,
@@ -249,7 +248,7 @@ func (s *BaseService) rawSend(msg *Message) (err error) {
 	return
 }
 
-func (s *BaseService) getStatus() ServiceStatus {
+func (s *BaseService) GetStatus() ServiceStatus {
 	return s.status
 }
 
@@ -257,63 +256,85 @@ func (s *BaseService) setStatus(status ServiceStatus) {
 	s.status = status
 }
 
-func (s *BaseService) Send(to uint64, content *Content) error {
+func (s *BaseService) Send(to uint64, content Content) error {
 	content.Session = NewSessionId()
 	content.proto = MESSAGE_REQUEST
 	msg := &Message{
 		From:    s.GetID(),
 		To:      to,
-		Content: content,
+		Content: &content,
 	}
 	return s.rawSend(msg)
 }
 
-func (s *BaseService) response(to uint64, content *Content) error {
-	content.proto = MESSAGE_RESPONSE
-	msg := &Message{
-		From:    s.GetID(),
-		To:      to,
-		Content: content,
-	}
-	return s.rawSend(msg)
-}
-
-func (s *BaseService) Call(to uint64, content *Content) (interface{}, error) {
-	content.chanRet = make(chan *RetInfo, 1)
-	content.Session = NewSessionId()
-	content.proto = MESSAGE_REQUEST
-	msg := &Message{
-		From:    s.GetID(),
-		To:      to,
-		Content: content,
-	}
-	err := s.rawSend(msg)
-	if err != nil {
-		close(content.chanRet) // 发送失败时关闭 channel
-		return nil, err
-	}
-
-	timeout := time.Duration(config.C.CallTimeout) * time.Second
-	// TODO: 是否需要使用 context.WithTimeout
-	select {
-	case ri := <-content.chanRet:
-		return ri.ret, ri.err
-	case <-time.After(timeout):
-		close(content.chanRet) // 超时后关闭 channel
-		return nil, fmt.Errorf("service %d call to service %d timed out", s.GetID(), to)
-	}
-}
-
-func (s *BaseService) AsyncCall(to uint64, content *Content, cb CbFunc) error {
+func (s *BaseService) AsyncCall(to uint64, content Content, cb CbFunc) error {
 	content.Session = NewSessionId()
 	content.cb = cb
 	content.proto = MESSAGE_REQUEST
 	msg := &Message{
 		From:    s.GetID(),
 		To:      to,
-		Content: content,
+		Content: &content,
 	}
 	return s.rawSend(msg)
+}
+
+func (s *BaseService) response(to uint64, content Content) error {
+	content.proto = MESSAGE_RESPONSE
+	msg := &Message{
+		From:    s.GetID(),
+		To:      to,
+		Content: &content,
+	}
+	return s.rawSend(msg)
+}
+
+func (s *BaseService) Call(to uint64, content Content) (interface{}, error) {
+	content.chanRet = make(chan *RetInfo, 1)
+	content.Session = NewSessionId()
+	content.proto = MESSAGE_REQUEST
+
+	msg := &Message{
+		From:    s.GetID(),
+		To:      to,
+		Content: &content,
+	}
+
+	err := s.rawSend(msg)
+	if err != nil {
+		// 安全地关闭 channel
+		s.closeRetChannelSafely(content.chanRet)
+		return nil, err
+	}
+
+	// 使用 BaseService 内部的 ctx 创建一个带有超时的 context
+	ctx, cancel := context.WithTimeout(s.ctx, time.Duration(config.C.CallTimeout)*time.Second)
+	defer cancel() // 确保在操作完成或超时后释放资源
+
+	select {
+	case ri := <-content.chanRet:
+		return ri.ret, ri.err
+	case <-ctx.Done():
+		// 超时处理，安全地关闭 channel
+		s.closeRetChannelSafely(content.chanRet)
+		// 检查超时或 BaseService 停止的原因
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("service %d call to service %d timed out", s.GetID(), to)
+		}
+		return nil, fmt.Errorf("service %d stopped while waiting for response", s.GetID())
+	}
+}
+
+func (s *BaseService) closeRetChannelSafely(ch chan *RetInfo) {
+	select {
+	case _, ok := <-ch:
+		if !ok {
+			// Channel 已关闭，不要再次关闭它
+			return
+		}
+	default:
+	}
+	close(ch)
 }
 
 type rpcStopArg struct {
