@@ -103,22 +103,6 @@ func (s *SchedulerService) stop() {
 	s.wg.Wait()
 }
 
-func (s *SchedulerService) rpcRegisterService(arg interface{}) interface{} {
-	service := arg.(Service)
-	return s.registerService(service)
-}
-
-func (s *SchedulerService) rpcNewServiceFromPlugin(arg interface{}) interface{} {
-	serviceFile := arg.(string)
-	id, err := s.newServiceFromPlugin(serviceFile)
-	return &NewServiceFromPluginRet{ID: id, Err: err}
-}
-
-type NewServiceFromPluginRet struct {
-	ID  uint64
-	Err error
-}
-
 // 从插件中开服务
 func (s *SchedulerService) newServiceFromPlugin(serviceFile string) (uint64, error) {
 	p, err := plugin.Open(serviceFile + ".so") // 打开插件文件
@@ -139,4 +123,20 @@ func (s *SchedulerService) newServiceFromPlugin(serviceFile string) (uint64, err
 	service := newServiceFunc(context.Background()) // 调用函数获取Service实例
 	s.registerService(service)
 	return service.GetID(), nil
+}
+
+func (s *SchedulerService) rpcRegisterService(arg interface{}) interface{} {
+	service := arg.(Service)
+	return s.registerService(service)
+}
+
+type NewServiceFromPluginRet struct {
+	ID  uint64
+	Err error
+}
+
+func (s *SchedulerService) rpcNewServiceFromPlugin(arg interface{}) interface{} {
+	serviceFile := arg.(string)
+	id, err := s.newServiceFromPlugin(serviceFile)
+	return &NewServiceFromPluginRet{ID: id, Err: err}
 }

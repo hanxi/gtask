@@ -44,7 +44,6 @@ type CbFunc func(ret interface{}, err error)
 
 // 定义 Service 接口
 type Service interface {
-	stop()
 	GetID() uint64
 	Send(to uint64, content Content) error                 // 发送消息
 	Call(to uint64, content Content) (interface{}, error)  // 同步rpc
@@ -53,6 +52,7 @@ type Service interface {
 	GetStatus() ServiceStatus
 
 	run(wg *sync.WaitGroup) // 消息处理
+	stop()
 	setStatus(status ServiceStatus)
 	setMessageOut(messageOut chan Message)
 	getMessageIn() chan Message
