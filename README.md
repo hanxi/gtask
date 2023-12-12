@@ -17,3 +17,10 @@
   - 参考 skynet 一个节点只实现一个 client 和一个 server
   - 协议采用 pb3
 
+
+## 参考
+- https://github.com/cloudwu/ltask
+- https://github.com/liangdas/mqant
+- https://github.com/name5566/leaf
+- https://github.com/bobohume/gonet
+- https://github.com/xingshuo/skyline
