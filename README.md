@@ -11,7 +11,8 @@
 ## TODO
 - [x] 插件服务加载示例
 - [x] Hello World 服务示例
-- [ ] 实现 bootstrap 服务
+- [x] 实现 bootstrap 服务
+- [ ] 实现 console 服务
 - [ ] 接入 NATS 实现远程服务 RPC
   - 参考 skynet 一个节点只实现一个 client 和一个 server
   - 协议采用 pb3
