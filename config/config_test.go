@@ -10,8 +10,8 @@ func TestLoad(t *testing.T) {
 	configPath := "config.json"
 	Load(configPath)
 
-	t.Println("configPath:%s", configPath)
-	t.Println("config.C:%+v", C)
+	t.Log("configPath", configPath)
+	t.Log("config.C", C)
 
 	// Log a debug message
 	log.Debug("This is a debug message")

@@ -55,14 +55,24 @@ func RegisterService(s Service) error {
 	return nil
 }
 
-// 从插件加载服务
-func NewServiceFromPlugin(serviceFile string) (uint64, error) {
+// 开启一个服务
+func SpawnService(name string) (uint64, error) {
 	// 需要确保Call函数没并发问题
-	ret, err := scheduler.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcNewServiceFromPlugin", Arg: serviceFile})
+	ret, err := scheduler.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcSpawnService", Arg: name})
 	if err != nil {
 		return 0, err
 	}
-	id := ret.(*NewServiceFromPluginRet).ID
-	err = ret.(*NewServiceFromPluginRet).Err
-	return id, err
+	sret := ret.(*SpawnServiceRet)
+	return sret.ID, sret.Err
+}
+
+// 从插件加载服务
+func NewServiceFromPlugin(name string) (uint64, error) {
+	// 需要确保Call函数没并发问题
+	ret, err := scheduler.Call(SERVICE_ID_PLUGIN, Content{Name: "rpcNewServiceFromPlugin", Arg: name})
+	if err != nil {
+		return 0, err
+	}
+	sret := ret.(*NewServiceFromPluginRet)
+	return sret.ID, sret.Err
 }

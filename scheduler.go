@@ -7,9 +7,12 @@ import (
 	"github.com/hanxi/gtask/log"
 	"os"
 	"os/signal"
-	"plugin"
 	"sync"
 	"syscall"
+)
+
+const (
+	SERVICE_ID_SCHEDULER uint64 = 1 // 调度服务
 )
 
 type SchedulerService struct {
@@ -20,15 +23,14 @@ type SchedulerService struct {
 }
 
 func newSchedulerService(ctx context.Context) *SchedulerService {
-	service := NewBaseServiceNoId(ctx)
-	service.id = SERVICE_ID_SCHEDULER
+	service := NewBaseServiceWithId(ctx, SERVICE_ID_SCHEDULER)
 	s := &SchedulerService{
 		BaseService:   service,
 		services:      make(map[uint64]Service),
 		allMessageOut: make(chan Message, config.C.MsgQueueLen),
 	}
 	s.Register("rpcRegisterService", s.rpcRegisterService)
-	s.Register("rpcNewServiceFromPlugin", s.rpcNewServiceFromPlugin)
+	s.Register("rpcSpawnService", s.rpcSpawnService)
 	return s
 }
 
@@ -103,40 +105,43 @@ func (s *SchedulerService) stop() {
 	s.wg.Wait()
 }
 
-// 从插件中开服务
-func (s *SchedulerService) newServiceFromPlugin(serviceFile string) (uint64, error) {
-	p, err := plugin.Open(serviceFile + ".so") // 打开插件文件
-	if err != nil {
-		return 0, err
-	}
-
-	newFunc, err := p.Lookup("NewService") // 查找插件导出的NewService函数
-	if err != nil {
-		return 0, err
-	}
-
-	newServiceFunc, ok := newFunc.(func(ctx context.Context) Service) // 类型断言为正确的函数签名
-	if !ok {
-		return 0, fmt.Errorf("Plugin %s has no 'NewService' function of the correct type", serviceFile)
-	}
-
-	service := newServiceFunc(context.Background()) // 调用函数获取Service实例
-	s.registerService(service)
-	return service.GetID(), nil
-}
-
 func (s *SchedulerService) rpcRegisterService(arg interface{}) interface{} {
 	service := arg.(Service)
 	return s.registerService(service)
 }
 
-type NewServiceFromPluginRet struct {
+// 服务创建函数
+type newServiceFunc func(ctx context.Context) Service
+
+var newServiceFuncs = map[string]newServiceFunc{}
+
+// 初始化服务的创建函数，在服务的 init 函数内执行
+func InitService(name string, fn newServiceFunc) {
+	newServiceFuncs[name] = fn
+}
+
+// 只在 launcher 服务内执行
+func getServiceNewFunc(name string) newServiceFunc {
+	return newServiceFuncs[name]
+}
+
+type SpawnServiceRet struct {
 	ID  uint64
 	Err error
 }
 
-func (s *SchedulerService) rpcNewServiceFromPlugin(arg interface{}) interface{} {
-	serviceFile := arg.(string)
-	id, err := s.newServiceFromPlugin(serviceFile)
-	return &NewServiceFromPluginRet{ID: id, Err: err}
+func (s *SchedulerService) rpcSpawnService(arg interface{}) interface{} {
+	name := arg.(string)
+	newServiceFunc := getServiceNewFunc(name)
+	if newServiceFunc == nil {
+		err := fmt.Errorf("service %s not in newServiceFuncs", name)
+		return &SpawnServiceRet{ID: 0, Err: err}
+	}
+
+	service := newServiceFunc(context.Background()) // 调用函数获取Service实例
+	err := s.registerService(service)
+	if err != nil {
+		return &SpawnServiceRet{ID: 0, Err: err}
+	}
+	return &SpawnServiceRet{ID: service.GetID(), Err: nil}
 }

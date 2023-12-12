@@ -2,8 +2,12 @@ package gtask
 
 import (
 	"context"
-
 	"github.com/hanxi/gtask/log"
+	"plugin"
+)
+
+const (
+	SERVICE_ID_PLUGIN uint64 = 2 // 插件服务
 )
 
 // PluginService 是一个实现了 Service 接口的插件服务
@@ -12,14 +16,32 @@ type PluginService struct {
 }
 
 func NewPluginService(ctx context.Context) Service {
-	service := NewBaseService(ctx)
-	return &PluginService{
+	service := NewBaseServiceWithId(ctx, SERVICE_ID_PLUGIN)
+	s := &PluginService{
 		BaseService: service,
 	}
+	s.Register("rpcNewServiceFromPlugin", s.rpcNewServiceFromPlugin)
+	log.Debug("newServiceFromPlugin", "id", service.GetID())
+	return s
 }
 
-// Stop 重写了 BaseService 的 stop 方法，以提供特定的停止逻辑
-func (p *PluginService) stop() {
-	log.Info("PluginService is stopping", "id", p.GetID())
-	p.BaseService.stop() // 调用基类的 Stop 方法来执行取消操作
+// 从插件中开服务
+func (s *PluginService) newServiceFromPlugin(name string) (uint64, error) {
+	_, err := plugin.Open(name + ".so") // 打开插件文件
+	if err != nil {
+		return 0, err
+	}
+
+	return SpawnService(name)
+}
+
+type NewServiceFromPluginRet struct {
+	ID  uint64
+	Err error
+}
+
+func (s *PluginService) rpcNewServiceFromPlugin(arg interface{}) interface{} {
+	name := arg.(string)
+	id, err := s.newServiceFromPlugin(name)
+	return &NewServiceFromPluginRet{ID: id, Err: err}
 }

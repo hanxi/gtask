@@ -67,10 +67,6 @@ const (
 	SERVICE_STATUS_DIE
 )
 
-const (
-	SERVICE_ID_SCHEDULER uint64 = 1 // 调度服务
-)
-
 type MessageType int
 
 const (
@@ -98,10 +94,10 @@ func NewServiceId() uint64 {
 	return atomic.AddUint64(&nextServiceId, 1)
 }
 
-func NewBaseServiceNoId(ctx context.Context) *BaseService {
+func NewBaseServiceWithId(ctx context.Context, id uint64) *BaseService {
 	ctx, cancel := context.WithCancel(ctx)
 	s := &BaseService{
-		id:        uint64(0),
+		id:        id,
 		messageIn: make(chan Message, config.C.MsgQueueLen),
 		ctx:       ctx,
 		cancel:    cancel,
@@ -113,7 +109,7 @@ func NewBaseServiceNoId(ctx context.Context) *BaseService {
 }
 
 func NewBaseService(ctx context.Context) *BaseService {
-	s := NewBaseServiceNoId(ctx)
+	s := NewBaseServiceWithId(ctx, 0)
 	s.id = NewServiceId()
 	return s
 }
