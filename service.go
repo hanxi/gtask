@@ -228,6 +228,7 @@ func (s *BaseService) run(c Service, wg *sync.WaitGroup) {
 			return
 		}
 	}
+	log.Info("end run", "id", s.GetID())
 }
 
 func (s *BaseService) GetID() uint64 {

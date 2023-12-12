@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/hanxi/gtask"
 	"github.com/hanxi/gtask/example/builtin-services/service1"
@@ -42,6 +43,11 @@ func main() {
 			log.Error("NewServiceFromPlugin myplugin2 filed", "err", err)
 		}
 		log.Info("myplugin2", "id", id)
+	}()
+
+	go func() {
+		time.Sleep(3 * time.Second)
+		gtask.Stop()
 	}()
 
 	gtask.Run()

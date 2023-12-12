@@ -70,6 +70,7 @@ func (s *SchedulerService) run(c Service, wg *sync.WaitGroup) {
 			return
 		}
 	}
+	log.Info("end run", "id", s.GetID())
 }
 
 func (s *SchedulerService) registerService(service Service) error {
@@ -93,35 +94,27 @@ func (s *SchedulerService) registerService(service Service) error {
 	return nil
 }
 
+// 使用 once 限制一个进程只运行一次
+var once sync.Once
+
 func (s *SchedulerService) stop() {
-	log.Info("stop", "id", s.GetID())
-	for id, service := range s.services {
-		if id != SERVICE_ID_SCHEDULER {
-			// 发消息的方式关闭服务
-			err := s.Send(id, Content{Name: "rpcStop", Arg: service})
-			if err != nil {
-				log.Error("stop call failed.", "id", id, "err", err)
-			}
-		}
-		log.Info("stop", "id", service.GetID())
-		//delete(s.services, id)
-	}
-	for {
-		allDie := true
+	once.Do(func() {
+		log.Info("stop", "id", s.GetID())
 		for id, service := range s.services {
 			if id != SERVICE_ID_SCHEDULER {
-				if service.GetStatus() != SERVICE_STATUS_DIE {
-					allDie = false
+				// 发消息的方式关闭服务
+				_, err := s.Call(id, Content{Name: "rpcStop", Arg: service})
+				if err != nil {
+					log.Error("stop call failed.", "id", id, "err", err)
 				}
 			}
+			log.Info("stop", "id", service.GetID())
+			delete(s.services, id)
 		}
-		if allDie {
-			break
-		}
-	}
-	log.Info("stop ok", "id", s.GetID())
-	s.BaseService.stop()
-	s.wg.Wait()
+		log.Info("stop ok", "id", s.GetID())
+		s.BaseService.stop()
+		s.wg.Wait()
+	})
 }
 
 func (s *SchedulerService) rpcRegisterService(arg interface{}) interface{} {
@@ -167,6 +160,8 @@ func (s *SchedulerService) rpcSpawnService(arg interface{}) interface{} {
 
 func (s *SchedulerService) rpcStop(arg interface{}) interface{} {
 	log.Info("rpcStop", "id", s.GetID())
-	s.stop()
+	// 目前协议过来的只能通过新的 goroutine 来调用,否则会卡住无法分发全局消息
+	// TODO: 支持一个服务有多个 goroutine 且一个服务同时只有一个 goroutine 在运行
+	go s.stop()
 	return nil
 }
