@@ -94,11 +94,22 @@ func (s *SchedulerService) registerService(service Service) error {
 	return nil
 }
 
-// 使用 once 限制一个进程只运行一次
-var once sync.Once
+// SingleFlight 是一个结构体，用于确保给定函数的单个执行
+type SingleFlight struct {
+	mu sync.Mutex
+}
+
+// Do 方法接收一个将被执行的函数，确保在同一时刻只有一个 goroutine 可以执行
+func (sf *SingleFlight) Do(f func()) {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	f()
+}
+
+var sf SingleFlight
 
 func (s *SchedulerService) stop() {
-	once.Do(func() {
+	sf.Do(func() {
 		log.Info("stop", "id", s.GetID())
 		for id, service := range s.services {
 			if id != SERVICE_ID_SCHEDULER {

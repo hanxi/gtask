@@ -14,6 +14,7 @@ type Config struct {
 	MsgQueueLen int
 	CallTimeout int
 	LogLevel    string
+	Bootstrap   string
 }
 
 // 包级别的配置实例，拥有默认值
@@ -22,6 +23,7 @@ var C = &Config{
 	MsgQueueLen: 4096, // 消息接收队列长度
 	CallTimeout: 1,    // Call超时（秒）
 	LogLevel:    "debug",
+	Bootstrap:   "bootstrap",
 }
 
 func onConfigInit() {

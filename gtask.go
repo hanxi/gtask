@@ -28,6 +28,9 @@ func Init(configPath string) {
 	// 加载插件服务
 	pluginService := NewPluginService(context.Background())
 	scheduler.registerService(pluginService)
+
+	// 加载入口服务
+	NewServiceFromPlugin(config.C.Bootstrap)
 }
 
 func Run() {
