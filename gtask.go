@@ -26,6 +26,8 @@ func Init(configPath string) {
 	scheduler.registerService(scheduler)
 
 	// 加载插件服务
+	pluginService := NewPluginService(context.Background())
+	scheduler.registerService(pluginService)
 }
 
 func Run() {
@@ -45,7 +47,8 @@ func Kill(addr uint64) {
 
 // 注册一个服务
 func RegisterService(s Service) error {
-	ret, err := s.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcRegisterService", Arg: s})
+	// TODO: 需要确保Call函数没并发问题
+	ret, err := scheduler.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcRegisterService", Arg: s})
 	if err != nil {
 		return err
 	}
@@ -57,7 +60,7 @@ func RegisterService(s Service) error {
 
 // 开启一个服务
 func SpawnService(name string) (uint64, error) {
-	// 需要确保Call函数没并发问题
+	// TODO: 需要确保Call函数没并发问题
 	ret, err := scheduler.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcSpawnService", Arg: name})
 	if err != nil {
 		return 0, err
@@ -68,7 +71,7 @@ func SpawnService(name string) (uint64, error) {
 
 // 从插件加载服务
 func NewServiceFromPlugin(name string) (uint64, error) {
-	// 需要确保Call函数没并发问题
+	// TODO: 需要确保Call函数没并发问题
 	ret, err := scheduler.Call(SERVICE_ID_PLUGIN, Content{Name: "rpcNewServiceFromPlugin", Arg: name})
 	if err != nil {
 		return 0, err

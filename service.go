@@ -50,8 +50,9 @@ type Service interface {
 	AsyncCall(to uint64, content Content, cb CbFunc) error // 异步rpc
 	Register(name string, fn HandlerFunc)                  // 注册rpc处理函数
 	GetStatus() ServiceStatus
+	OnInit()
 
-	run(wg *sync.WaitGroup) // 消息处理
+	run(c Service, wg *sync.WaitGroup) // 消息处理
 	stop()
 	setStatus(status ServiceStatus)
 	setMessageOut(messageOut chan Message)
@@ -116,14 +117,14 @@ func NewBaseService(ctx context.Context) *BaseService {
 
 func (s *BaseService) Register(name string, fn HandlerFunc) {
 	if _, ok := s.handlers[name]; ok {
-		log.Error("already registered", "name", name)
-		return
+		log.Debug("already registered will override", "name", name, "old", s.handlers[name])
 	}
 	s.handlers[name] = fn
 	log.Debug("Register", "name", name, "fn", fn)
 }
 
 func (s *BaseService) stop() {
+	log.Debug("BaseService stop", "id", s.id)
 	s.setStatus(SERVICE_STATUS_DIE)
 	s.cancel()
 }
@@ -176,6 +177,8 @@ func (s *BaseService) exec(msg *Message) {
 		}
 	}()
 
+	log.Debug("exec", "msg", msg)
+
 	// 处理 AsyncCall
 	content := msg.Content
 	if content.proto == MESSAGE_RESPONSE {
@@ -207,10 +210,15 @@ func (s *BaseService) exec(msg *Message) {
 	s.ret(msg, &RetInfo{ret: ret})
 }
 
-func (s *BaseService) run(wg *sync.WaitGroup) {
+func (s *BaseService) OnInit() {
+	log.Debug("OnInit", "id", s.id)
+}
+
+func (s *BaseService) run(c Service, wg *sync.WaitGroup) {
 	defer wg.Done()
-	log.Info("in run ", "service", s)
+	log.Info("in run ", "service", s, "c", c)
 	s.setStatus(SERVICE_STATUS_RUNNING)
+	c.OnInit()
 	for {
 		select {
 		case msg := <-s.messageIn:
@@ -233,6 +241,7 @@ func (s *BaseService) rawSend(msg *Message) (err error) {
 		}
 	}()
 
+	log.Debug("rawSend", "msg", msg)
 	select {
 	case s.messageOut <- *msg:
 		return nil

@@ -20,10 +20,15 @@ func NewMyBuiltinService(ctx context.Context) gtask.Service {
 		BaseService: baseService,
 	}
 	s.Register("rpcPing", s.rpcPing)
+	log.Debug("NewMyBuiltinService", "id", s.GetID())
 	return s
 }
 
 func (s *MyBuiltinService) rpcPing(arg interface{}) interface{} {
-	log.Info("in MyBuiltinService rpcPing")
+	log.Info("in MyBuiltinService rpcPing", "arg", arg)
 	return "pong"
+}
+
+func (s *MyBuiltinService) OnInit() {
+	log.Debug("MyBuiltinService OnInit", "id", s.GetID())
 }

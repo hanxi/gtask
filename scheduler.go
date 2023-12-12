@@ -31,6 +31,7 @@ func newSchedulerService(ctx context.Context) *SchedulerService {
 	}
 	s.Register("rpcRegisterService", s.rpcRegisterService)
 	s.Register("rpcSpawnService", s.rpcSpawnService)
+	s.Register("rpcStop", s.rpcStop)
 	return s
 }
 
@@ -49,9 +50,9 @@ func (s *SchedulerService) wait() {
 	s.stop()
 }
 
-func (s *SchedulerService) run(wg *sync.WaitGroup) {
+func (s *SchedulerService) run(c Service, wg *sync.WaitGroup) {
 	defer wg.Done()
-	log.Info("in run", "service", s)
+	log.Info("in run", "service", s, "c", c)
 	s.setStatus(SERVICE_STATUS_RUNNING)
 
 	for {
@@ -88,19 +89,37 @@ func (s *SchedulerService) registerService(service Service) error {
 	service.setStatus(SERVICE_STATUS_INIT)
 	service.setMessageOut(s.allMessageOut)
 	s.wg.Add(1)
-	go service.run(&s.wg)
+	go service.run(service, &s.wg)
 	return nil
 }
 
 func (s *SchedulerService) stop() {
+	log.Info("stop", "id", s.GetID())
 	for id, service := range s.services {
 		if id != SERVICE_ID_SCHEDULER {
 			// 发消息的方式关闭服务
-			s.Call(id, Content{Name: "rpcStop"})
+			err := s.Send(id, Content{Name: "rpcStop", Arg: service})
+			if err != nil {
+				log.Error("stop call failed.", "id", id, "err", err)
+			}
 		}
 		log.Info("stop", "id", service.GetID())
-		delete(s.services, id)
+		//delete(s.services, id)
 	}
+	for {
+		allDie := true
+		for id, service := range s.services {
+			if id != SERVICE_ID_SCHEDULER {
+				if service.GetStatus() != SERVICE_STATUS_DIE {
+					allDie = false
+				}
+			}
+		}
+		if allDie {
+			break
+		}
+	}
+	log.Info("stop ok", "id", s.GetID())
 	s.BaseService.stop()
 	s.wg.Wait()
 }
@@ -144,4 +163,10 @@ func (s *SchedulerService) rpcSpawnService(arg interface{}) interface{} {
 		return &SpawnServiceRet{ID: 0, Err: err}
 	}
 	return &SpawnServiceRet{ID: service.GetID(), Err: nil}
+}
+
+func (s *SchedulerService) rpcStop(arg interface{}) interface{} {
+	log.Info("rpcStop", "id", s.GetID())
+	s.stop()
+	return nil
 }

@@ -18,7 +18,7 @@ func TestBasicService(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go bs.run(&wg)
+	go bs.run(bs, &wg)
 }
 
 func TestSchedulerService(t *testing.T) {
@@ -31,7 +31,9 @@ func TestSchedulerService(t *testing.T) {
 		log.Info("in s1 f1", "arg", arg)
 		return "return s1 f1"
 	})
-	RegisterService(s1) // 任意 goroutine 里调用都可以
+	ret, err := scheduler.Call(SERVICE_ID_SCHEDULER, Content{Name: "rpcRegisterService", Arg: s1})
+	log.Info("after RegisterService", "err", err, "ret", ret)
+
 	scheduler.Send(s1.GetID(), Content{Name: "f1", Arg: "f1arg"})
 	s1.Send(scheduler.GetID(), Content{Name: "rpcRegisterService", Arg: s1})
 

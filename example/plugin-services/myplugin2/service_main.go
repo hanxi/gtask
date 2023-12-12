@@ -24,6 +24,6 @@ func NewMyPluginService(ctx context.Context) gtask.Service {
 }
 
 func (s *MyPluginService) rpcPing2(arg interface{}) interface{} {
-	log.Info("in MyPluginService rpcPing2")
+	log.Info("in MyPluginService rpcPing2", "arg", arg)
 	return "pong2"
 }

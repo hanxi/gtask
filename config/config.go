@@ -31,14 +31,14 @@ func onConfigInit() {
 func doLoad(configPath string) {
 	file, fileErr := os.Open(configPath)
 	if fileErr != nil {
-		slog.Error("Error opening config file. Using default config", "file", fileErr)
+		slog.Error("Error opening config file. Using default config", "file", fileErr, "C", C)
 		return
 	}
 	defer file.Close()
 
 	decoder := json.NewDecoder(file)
 	if decodeErr := decoder.Decode(C); decodeErr != nil {
-		slog.Error("Error decoding config file. Using default config.", "file", decodeErr)
+		slog.Error("Error decoding config file. Using default config.", "file", decodeErr, "C", C)
 	}
 }
 
