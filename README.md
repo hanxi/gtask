@@ -17,6 +17,9 @@
   - 参考 skynet 一个节点只实现一个 client 和一个 server
   - 协议采用 pb3
 
+## 想法记录
+
+https://blog.hanxi.cc/?p=92
 
 ## 参考
 - https://github.com/cloudwu/ltask
